@@ -2,6 +2,9 @@
 .deno/
 deno.lock.bak
 
+# Compiled agent CLI binary
+agent/claw
+
 # Coverage output
 cov/
 coverage/

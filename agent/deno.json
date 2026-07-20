@@ -1,0 +1,28 @@
+{
+  "name": "@dtinth/claw-agent",
+  "version": "0.0.0",
+  "exports": "./main.ts",
+  "tasks": {
+    "test": "deno test --allow-env --allow-read --allow-write --allow-run",
+    "check": "deno check .",
+    "ci": "deno fmt --check && deno lint && deno check . && deno task test",
+    "compile": "deno compile --allow-env --allow-read --allow-write --allow-run --allow-net -o claw main.ts"
+  },
+  "imports": {
+    "@std/assert": "jsr:@std/assert@^1.0.19"
+  },
+  "compilerOptions": {
+    "strict": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true
+  },
+  "fmt": {
+    "lineWidth": 100
+  },
+  "lint": {
+    "rules": {
+      "tags": ["recommended"]
+    }
+  }
+}

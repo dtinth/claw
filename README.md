@@ -135,6 +135,53 @@ export GITHUB_APP_ID=… GITHUB_APP_PRIVATE_KEY="$(cat key.pem)" \
 deno task start
 ```
 
+## Agent CLI
+
+[`agent/`](agent) is a standalone Deno CLI for the machine on the *other* end
+of a claw JWT — a coding agent that needs `gh`/`git` to work against a repo
+without ever touching the app's private key. It's a separate project (its own
+`deno.json`, no import from `src/`) so the two halves can't accidentally share
+secrets.
+
+```sh
+cd agent
+deno task compile   # -> ./claw
+ln -sf "$PWD/claw" ~/.local/bin/claw   # put it on PATH; re-run compile after any code change
+```
+
+Set up once per repo you want to delegate to an agent: mint a claw JWT from
+the web UI, then hand it to `claw grant` — it decodes the token's own
+repository claim, so there's nothing else to specify:
+
+```sh
+claw grant   # paste the JWT when prompted, or: claw grant <jwt>
+```
+
+This writes `~/.config/claw/grants.json` (`{"owner/repo": "<jwt>"}`), adding
+to or updating whatever's already there. Then, per machine:
+
+```sh
+export CLAW_BASE_URL=https://claw.example.com
+claw setup   # point git's github.com credential helper at `gh auth git-credential`
+claw doctor  # sanity-check config, grants and the git wiring
+```
+
+`claw setup` doesn't touch `gh`'s own login state — it only rewires git's
+credential helper to read whatever `GH_TOKEN` is in the environment when
+invoked. From then on:
+
+```sh
+claw token                        # print a token for the repo (--repo, $CLAW_REPO, or git origin)
+claw exec -- gh pr create …       # run a command with GH_TOKEN + CLAW_REPO set
+claw exec -- git push
+```
+
+`exec` mints a token (or reuses a cached one with >5 minutes left) and sets it
+as `GH_TOKEN` for the child process only — `gh` reads it directly, and git
+picks it up through the credential helper `setup` installed. Tokens are
+scoped to the single repo the JWT names, so wrap the command, not a whole
+shell session: `GH_TOKEN` is a snapshot and doesn't renew mid-session.
+
 ## Deployment
 
 The repository ships a [`Dockerfile`](Dockerfile). Any platform that builds and
@@ -170,3 +217,4 @@ deno task ci      # fmt --check + lint + check + test (what CI runs)
 | `src/github/` | Repo parsing, app JWT, and the GitHub API client. |
 | `src/web/` | The Hono app, routes and server-rendered views. |
 | `src/main.ts` | Wire everything together and serve. |
+| `agent/` | The standalone agent CLI (`claw token`/`exec`/`setup`/`doctor`); its own `deno.json`, no import from `src/`. |
