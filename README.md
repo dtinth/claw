@@ -1,12 +1,11 @@
 # claw
 
-A small server that gives your coding agents **fine-grained, time-boxed access
-to your GitHub repositories** — and lets them draft comments for you to post,
+A small server that gives my coding agents **fine-grained, time-boxed access
+to your GitHub repositories** — and lets them draft comments for me to post,
 rather than commenting as themselves.
 
-claw is built around a GitHub App (in this deployment, **DTINTH-CLAW**) that is
-installed on your repositories. Only you (`ALLOWED_LOGIN`, default `dtinth`) can
-log in and take action.
+claw is built around a GitHub App (in this deployment, **dtinth/claw**) that is
+installed on my repositories.
 
 ## What it does
 
