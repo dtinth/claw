@@ -8,15 +8,10 @@
  * directly, so no key-format conversion is needed.
  */
 import { createSign } from "node:crypto";
-
-function base64url(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
+import { base64url } from "jose";
 
 function base64urlJson(value: unknown): string {
-  return base64url(new TextEncoder().encode(JSON.stringify(value)));
+  return base64url.encode(new TextEncoder().encode(JSON.stringify(value)));
 }
 
 /**
@@ -40,5 +35,5 @@ export function createAppJwt(appId: string, privateKeyPem: string, now: Date = n
   signer.update(signingInput);
   const signature = signer.sign(privateKeyPem);
 
-  return `${signingInput}.${base64url(new Uint8Array(signature))}`;
+  return `${signingInput}.${base64url.encode(new Uint8Array(signature))}`;
 }

@@ -83,24 +83,17 @@ export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
   const api = (deps.apiBaseUrl ?? DEFAULT_API_BASE).replace(/\/$/, "");
   const oauth = (deps.oauthBaseUrl ?? DEFAULT_OAUTH_BASE).replace(/\/$/, "");
 
-  function appHeaders(): HeadersInit {
-    const jwt = createAppJwt(deps.appId, deps.privateKeyPem);
+  function ghHeaders(authToken: string): HeadersInit {
     return {
-      "Authorization": `Bearer ${jwt}`,
+      "Authorization": `Bearer ${authToken}`,
       "Accept": "application/vnd.github+json",
       "X-GitHub-Api-Version": API_VERSION,
       "User-Agent": USER_AGENT,
     };
   }
 
-  function userHeaders(accessToken: string): HeadersInit {
-    return {
-      "Authorization": `Bearer ${accessToken}`,
-      "Accept": "application/vnd.github+json",
-      "X-GitHub-Api-Version": API_VERSION,
-      "User-Agent": USER_AGENT,
-    };
-  }
+  const appHeaders = () => ghHeaders(createAppJwt(deps.appId, deps.privateKeyPem));
+  const userHeaders = (accessToken: string) => ghHeaders(accessToken);
 
   async function readError(response: Response): Promise<string> {
     let detail = "";
