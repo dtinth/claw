@@ -547,7 +547,7 @@ const PERMISSION_PRESETS = [
       workflows: "write",
       checks: "read",
       statuses: "read",
-      actions: "read",
+      actions: "write",
     },
   },
   { id: "issues-prs", label: "Issues & PRs", perms: { issues: "write", pull_requests: "write" } },
