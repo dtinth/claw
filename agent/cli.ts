@@ -7,11 +7,15 @@
  */
 import { clearCache } from "./cache.ts";
 import { loadConfigOrEmpty, setBaseUrl } from "./config_store.ts";
-import { loadGrants, upsertGrant } from "./grants.ts";
+import { findGrant, loadGrants, upsertGrant } from "./grants.ts";
 import { decodeClawJwtPayload } from "./jwt_decode.ts";
+import { runMonitorLoop } from "./monitor.ts";
 import { type Paths, resolvePaths } from "./paths.ts";
 import { resolveRepo } from "./resolve_repo.ts";
 import { getToken } from "./token.ts";
+
+const MONITOR_USAGE =
+  "usage: claw monitor <issue> [--repo owner/repo] [--authors a,b] [--interval 10]";
 
 const HELP_TEXT = `claw — mint repo-scoped GitHub tokens from a claw JWT
 
@@ -20,6 +24,8 @@ Usage:
   claw set server <url>                 Save the claw server URL (or print it, with no <url>)
   claw token [--repo owner/repo]        Print a token for the repo (mint or reuse the cache)
   claw exec [--repo owner/repo] -- CMD  Run CMD with GH_TOKEN and CLAW_REPO set
+  claw monitor <issue> [--repo owner/repo] [--authors a,b] [--interval 10]
+                                         Poll for new comments on one issue/PR, one JSON per line
   claw setup                            Point git's github.com credential helper at gh
   claw doctor                           Check config, grants, and git wiring
 
@@ -56,6 +62,8 @@ export interface Runtime {
   ) => Promise<{ code: number }>;
   /** Read a single line from stdin (used by `claw grant` when no token is given as an arg). */
   readLine: () => Promise<string>;
+  /** Delay for the given milliseconds (used by `claw monitor`'s poll loop). */
+  sleep: (ms: number) => Promise<void>;
 }
 
 async function getGitRemoteUrl(rt: Runtime): Promise<string | null> {
@@ -182,6 +190,93 @@ async function cmdSet(args: string[], rt: Runtime): Promise<number> {
   await setBaseUrl(path, normalized);
   rt.stdout(`claw: server set to ${normalized}\n  saved to: ${path}\n`);
   return 0;
+}
+
+interface MonitorArgs {
+  issue?: number;
+  repo?: string;
+  authors?: string[];
+  intervalSeconds?: number;
+  error?: string;
+}
+
+function parseMonitorArgs(args: string[]): MonitorArgs {
+  let repo: string | undefined;
+  let authors: string[] | undefined;
+  let intervalSeconds: number | undefined;
+  const positional: string[] = [];
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--repo") {
+      repo = args[++i];
+    } else if (arg.startsWith("--repo=")) {
+      repo = arg.slice("--repo=".length);
+    } else if (arg === "--authors") {
+      authors = (args[++i] ?? "").split(",").map((a) => a.trim()).filter(Boolean);
+    } else if (arg.startsWith("--authors=")) {
+      authors = arg.slice("--authors=".length).split(",").map((a) => a.trim()).filter(Boolean);
+    } else if (arg === "--interval") {
+      intervalSeconds = Number(args[++i]);
+    } else if (arg.startsWith("--interval=")) {
+      intervalSeconds = Number(arg.slice("--interval=".length));
+    } else {
+      positional.push(arg);
+    }
+  }
+
+  const issueRaw = positional[0];
+  const issue = issueRaw !== undefined ? Number(issueRaw) : NaN;
+  if (issueRaw === undefined || !Number.isInteger(issue) || issue <= 0) {
+    return { error: MONITOR_USAGE };
+  }
+  if (
+    intervalSeconds !== undefined && (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0)
+  ) {
+    return { error: `claw: --interval must be a positive number of seconds` };
+  }
+
+  return {
+    issue,
+    ...(repo !== undefined ? { repo } : {}),
+    ...(authors !== undefined ? { authors } : {}),
+    ...(intervalSeconds !== undefined ? { intervalSeconds } : {}),
+  };
+}
+
+async function cmdMonitor(args: string[], rt: Runtime): Promise<number> {
+  const parsed = parseMonitorArgs(args);
+  if (parsed.error || parsed.issue === undefined) {
+    rt.stderr((parsed.error ?? MONITOR_USAGE) + "\n");
+    return 1;
+  }
+
+  const context = await resolveContext(parsed.repo, rt);
+  const jwt = findGrant(context.grants, context.repo);
+  const intervalMs = (parsed.intervalSeconds ?? 10) * 1000;
+
+  rt.stderr(
+    `claw monitor: watching ${context.repo}#${parsed.issue} every ${
+      intervalMs / 1000
+    }s (Ctrl-C to stop)...\n`,
+  );
+
+  try {
+    await runMonitorLoop({
+      baseUrl: context.baseUrl,
+      jwt,
+      issue: parsed.issue,
+      ...(parsed.authors ? { authors: parsed.authors } : {}),
+      intervalMs,
+      fetch: rt.fetch,
+      stdout: rt.stdout,
+      stderr: rt.stderr,
+      sleep: rt.sleep,
+    });
+    return 0;
+  } catch {
+    return 1;
+  }
 }
 
 async function cmdToken(args: string[], rt: Runtime): Promise<number> {
@@ -326,6 +421,8 @@ export async function runCli(argv: string[], rt: Runtime): Promise<number> {
         return await cmdGrant(rest, rt);
       case "set":
         return await cmdSet(rest, rt);
+      case "monitor":
+        return await cmdMonitor(rest, rt);
       case "token":
         return await cmdToken(rest, rt);
       case "exec":

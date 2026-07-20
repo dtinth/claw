@@ -54,6 +54,7 @@ function makeFakeRuntime(opts: FakeRuntimeOptions = {}) {
       return Promise.resolve({ code: opts.spawnCode ?? 0 });
     },
     readLine: () => Promise.resolve(opts.stdin ?? ""),
+    sleep: () => Promise.resolve(),
   };
 
   return { rt, stdout, stderr, commandCalls, spawnCalls, fetchCalls };
@@ -429,6 +430,70 @@ Deno.test("exec: requires a -- separator", async () => {
   assertEquals(code, 1);
   assertEquals(spawnCalls.length, 0);
   assertStringIncludes(stderr.join(""), "usage");
+});
+
+// --- claw monitor --------------------------------------------------------
+//
+// Only the fast-fail validation paths are covered here (the CLI dispatch
+// layer's job); the actual poll loop is monitor_test.ts's job, exercised
+// directly against runMonitorLoop with a bounded shouldStop.
+
+Deno.test("monitor: requires an issue number", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["monitor"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "usage");
+});
+
+Deno.test("monitor: rejects a non-numeric issue", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["monitor", "not-a-number"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "usage");
+});
+
+Deno.test("monitor: fails cleanly when no claw server is configured", async () => {
+  const { rt, stderr } = makeFakeRuntime({
+    env: { HOME: "/home/dtinth", CLAW_REPO: "dtinth/claw" },
+  });
+  const code = await runCli(["monitor", "24"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "CLAW_BASE_URL");
+});
+
+Deno.test("monitor: fails cleanly when no repo can be resolved", async () => {
+  const { rt, stderr } = makeFakeRuntime({
+    env: { HOME: "/home/dtinth", CLAW_BASE_URL: "https://claw.example.com" },
+    commandOutputs: { "git remote get-url origin": { code: 1 } },
+  });
+  const code = await runCli(["monitor", "24"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "repository");
+});
+
+Deno.test("monitor: fails cleanly when there is no grant for the repo", async () => {
+  const configDir = await Deno.makeTempDir();
+  // grants.json deliberately has no entry for dtinth/claw.
+  await Deno.writeTextFile(`${configDir}/grants.json`, JSON.stringify({}));
+  const { rt, stderr } = makeFakeRuntime({
+    env: {
+      HOME: "/home/dtinth",
+      CLAW_BASE_URL: "https://claw.example.com",
+      CLAW_REPO: "dtinth/claw",
+      CLAW_CONFIG_DIR: configDir,
+      CLAW_CACHE_DIR: await Deno.makeTempDir(),
+    },
+  });
+  const code = await runCli(["monitor", "24"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "no grant for dtinth/claw");
+});
+
+Deno.test("monitor: rejects a non-positive --interval", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["monitor", "24", "--interval", "0"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "--interval");
 });
 
 // --- claw setup ----------------------------------------------------------

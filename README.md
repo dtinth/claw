@@ -182,6 +182,33 @@ picks it up through the credential helper `setup` installed. Tokens are
 scoped to the single repo the JWT names, so wrap the command, not a whole
 shell session: `GH_TOKEN` is a snapshot and doesn't renew mid-session.
 
+### Watching for comments
+
+`claw monitor <issue>` polls the comment relay (feature 3 above) for one
+issue/PR and prints each new comment as a single JSON line — a jsonl stream
+meant to feed a long-running watcher (e.g. Claude Code's `Monitor` tool,
+which treats each stdout line as an event):
+
+```sh
+claw monitor 24                          # poll dtinth/claw#24 every 10s (default)
+claw monitor 24 --interval 30            # slower polling
+claw monitor 24 --authors dtinth         # only comments from these logins
+```
+
+Unlike `token`/`exec`, this doesn't mint an installation token — `/api/comments`
+accepts the claw JWT directly, so `monitor` just reads it straight from the
+grants file. Status and errors go to stderr only, never stdout, so the jsonl
+stream stays clean; a transient failure (network blip, 5xx) is logged and
+retried, never crashes the process, but an invalid/expired JWT (401) or a
+relay that isn't configured on the server (503) exits — those won't fix
+themselves by retrying.
+
+`monitor` is stateless: the first poll of a run emits every comment already
+there (you just started watching, you want the context), and later polls in
+that same run only emit new arrivals — but nothing is written to disk, so a
+restart re-emits the current backlog rather than resuming from where it left
+off.
+
 ## Deployment
 
 The repository ships a [`Dockerfile`](Dockerfile). Any platform that builds and

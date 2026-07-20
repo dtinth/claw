@@ -69,6 +69,10 @@ async function readLine(): Promise<string> {
   return buffer;
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 const encoder = new TextEncoder();
 
 const runtime: Runtime = {
@@ -80,6 +84,7 @@ const runtime: Runtime = {
   runCommand,
   spawnInteractive,
   readLine,
+  sleep,
 };
 
 if (import.meta.main) {
