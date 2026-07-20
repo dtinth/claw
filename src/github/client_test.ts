@@ -128,6 +128,30 @@ Deno.test("buildAuthorizeUrl includes the PKCE challenge when provided", () => {
   assertEquals(url.searchParams.get("code_challenge_method"), "S256");
 });
 
+Deno.test("buildAuthorizeUrl includes the OAuth scope when provided", () => {
+  const client = makeClient(fetch);
+  const url = new URL(client.buildAuthorizeUrl({
+    state: "s",
+    redirectUri: "https://c/cb",
+    scopes: "public_repo",
+  }));
+  assertEquals(url.searchParams.get("scope"), "public_repo");
+});
+
+Deno.test("refreshUserToken exchanges a refresh token for a fresh token", async () => {
+  const { fn, calls } = fakeFetch({
+    "POST /login/oauth/access_token": () =>
+      json({ access_token: "ghu_new", refresh_token: "ghr_new", expires_in: 28800 }),
+  });
+  const client = makeClient(fn);
+  const token = await client.refreshUserToken("ghr_old");
+  assertEquals(token.accessToken, "ghu_new");
+  assertEquals(token.refreshToken, "ghr_new");
+  const body = calls[0]!.body as { grant_type: string; refresh_token: string };
+  assertEquals(body.grant_type, "refresh_token");
+  assertEquals(body.refresh_token, "ghr_old");
+});
+
 Deno.test("exchangeCode forwards the PKCE code_verifier", async () => {
   const { fn, calls } = fakeFetch({
     "POST /login/oauth/access_token": () => json({ access_token: "ghu_x" }),

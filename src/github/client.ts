@@ -52,10 +52,14 @@ export interface GitHubClientDeps {
 /** claw's GitHub client surface. */
 export interface GitHubClient {
   mintRepoToken(repo: string, permissions: Permissions): Promise<InstallationToken>;
-  buildAuthorizeUrl(params: { state: string; redirectUri: string; codeChallenge?: string }): string;
+  buildAuthorizeUrl(
+    params: { state: string; redirectUri: string; codeChallenge?: string; scopes?: string },
+  ): string;
   exchangeCode(
     params: { code: string; redirectUri: string; codeVerifier?: string },
   ): Promise<UserToken>;
+  /** Exchange a refresh token for a fresh user access token. */
+  refreshUserToken(refreshToken: string): Promise<UserToken>;
   getAuthenticatedUser(accessToken: string): Promise<{ login: string; id: number }>;
   postIssueComment(
     accessToken: string,
@@ -107,6 +111,43 @@ export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
       detail = "";
     }
     return detail;
+  }
+
+  /** POST the OAuth token endpoint (used by both code exchange and refresh). */
+  async function postToken(params: Record<string, string>): Promise<UserToken> {
+    const response = await fetchFn(`${oauth}/login/oauth/access_token`, {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "content-type": "application/json",
+        "User-Agent": USER_AGENT,
+      },
+      body: JSON.stringify(params),
+    });
+    if (!response.ok) {
+      throw new GitHubApiError(
+        response.status,
+        `token request failed: ${await readError(response)}`,
+      );
+    }
+    const data = await response.json() as {
+      access_token?: string;
+      refresh_token?: string;
+      expires_in?: number;
+      error?: string;
+      error_description?: string;
+    };
+    if (data.error || !data.access_token) {
+      throw new GitHubApiError(
+        400,
+        `token request failed: ${data.error ?? "no access_token"} ${data.error_description ?? ""}`
+          .trim(),
+      );
+    }
+    const userToken: UserToken = { accessToken: data.access_token };
+    if (data.refresh_token) userToken.refreshToken = data.refresh_token;
+    if (data.expires_in !== undefined) userToken.expiresInSeconds = data.expires_in;
+    return userToken;
   }
 
   async function graphql(accessToken: string, query: string, variables: unknown): Promise<unknown> {
@@ -178,11 +219,12 @@ export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
       };
     },
 
-    buildAuthorizeUrl({ state, redirectUri, codeChallenge }) {
+    buildAuthorizeUrl({ state, redirectUri, codeChallenge, scopes }) {
       const url = new URL(`${oauth}/login/oauth/authorize`);
       url.searchParams.set("client_id", deps.clientId);
       url.searchParams.set("redirect_uri", redirectUri);
       url.searchParams.set("state", state);
+      if (scopes) url.searchParams.set("scope", scopes);
       if (codeChallenge) {
         url.searchParams.set("code_challenge", codeChallenge);
         url.searchParams.set("code_challenge_method", "S256");
@@ -190,48 +232,24 @@ export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
       return url.toString();
     },
 
-    async exchangeCode({ code, redirectUri, codeVerifier }) {
-      const body: Record<string, string> = {
+    exchangeCode({ code, redirectUri, codeVerifier }) {
+      const params: Record<string, string> = {
         client_id: deps.clientId,
         client_secret: deps.clientSecret,
         code,
         redirect_uri: redirectUri,
       };
-      if (codeVerifier) body.code_verifier = codeVerifier;
-      const response = await fetchFn(`${oauth}/login/oauth/access_token`, {
-        method: "POST",
-        headers: {
-          "Accept": "application/json",
-          "content-type": "application/json",
-          "User-Agent": USER_AGENT,
-        },
-        body: JSON.stringify(body),
+      if (codeVerifier) params.code_verifier = codeVerifier;
+      return postToken(params);
+    },
+
+    refreshUserToken(refreshToken) {
+      return postToken({
+        client_id: deps.clientId,
+        client_secret: deps.clientSecret,
+        grant_type: "refresh_token",
+        refresh_token: refreshToken,
       });
-      if (!response.ok) {
-        throw new GitHubApiError(
-          response.status,
-          `token exchange failed: ${await readError(response)}`,
-        );
-      }
-      const data = await response.json() as {
-        access_token?: string;
-        refresh_token?: string;
-        expires_in?: number;
-        error?: string;
-        error_description?: string;
-      };
-      if (data.error || !data.access_token) {
-        throw new GitHubApiError(
-          400,
-          `token exchange failed: ${data.error ?? "no access_token"} ${
-            data.error_description ?? ""
-          }`.trim(),
-        );
-      }
-      const userToken: UserToken = { accessToken: data.access_token };
-      if (data.refresh_token) userToken.refreshToken = data.refresh_token;
-      if (data.expires_in !== undefined) userToken.expiresInSeconds = data.expires_in;
-      return userToken;
     },
 
     async getAuthenticatedUser(accessToken) {

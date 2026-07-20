@@ -77,8 +77,9 @@ All configuration comes from environment variables:
 | --- | --- | --- |
 | `GITHUB_APP_ID` | ✅ | The GitHub App's numeric id. |
 | `GITHUB_APP_PRIVATE_KEY` | ✅ | The app private key (PEM). Escaped `\n` or base64 is accepted. |
-| `GITHUB_CLIENT_ID` | ✅ | The app's OAuth client id. |
-| `GITHUB_CLIENT_SECRET` | ✅ | The app's OAuth client secret. |
+| `GITHUB_CLIENT_ID` | ✅ | OAuth client id used for your browser login (see the login note below). |
+| `GITHUB_CLIENT_SECRET` | ✅ | OAuth client secret for the login. |
+| `GITHUB_OAUTH_SCOPES` | — | OAuth scopes requested at login. Default `public_repo`. Set empty for a GitHub App login. |
 | `CLAW_JWT_SECRET` | ✅ | Secret used to sign intermediary claw JWTs (HS256). |
 | `BASE_URL` | ✅ | Public base URL, e.g. `https://claw.example.com`. |
 | `ALLOWED_LOGIN` | — | The single GitHub login allowed to use claw. Default `dtinth`. |
@@ -98,6 +99,23 @@ All configuration comes from environment variables:
 3. Enable user-to-server auth and set the **Callback URL** to
    `${BASE_URL}/auth/callback`.
 4. Install the app on the repositories you want to reach.
+
+> **Which login: OAuth App or GitHub App?** The token broker (feature 1) always
+> uses the **GitHub App** — it needs the app private key, and `GITHUB_CLIENT_ID`/
+> `GITHUB_CLIENT_SECRET` are used *only* for your browser login. For the comment
+> feature, that login determines where you can post:
+>
+> - **OAuth App** (recommended, the default) — put an OAuth App's client id/secret
+>   in those vars. With `GITHUB_OAUTH_SCOPES=public_repo` (the default) you can
+>   comment on **any public repo**, because OAuth tokens are scope-based, not
+>   installation-based.
+> - **GitHub App user-to-server** — reuse the GitHub App's OAuth credentials and
+>   set `GITHUB_OAUTH_SCOPES=` (empty). Least-privilege, but you can then only
+>   comment on repos where the app is **installed** (i.e. your own).
+>
+> claw refreshes the user token automatically when it is about to expire (GitHub
+> App user tokens expire ~8h; OAuth App tokens usually don't), falling back to a
+> re-login prompt if the refresh fails.
 
 > **A note on PKCE:** GitHub supports PKCE (S256) for OAuth and GitHub App
 > authentication, but still requires the `client_secret` at the token exchange

@@ -14,6 +14,7 @@ const config: Config = {
   privateKeyPem: "unused-in-web-tests",
   clientId: "Iv1.client",
   clientSecret: "secret",
+  oauthScopes: "public_repo",
   jwtSecret: "jwt-secret",
   baseUrl: "https://claw.example.com",
   allowedLogin: "dtinth",
@@ -31,6 +32,7 @@ function fakeGitHub(overrides: Partial<GitHubClient> = {}): GitHubClient {
     mintRepoToken: notUsed("mintRepoToken"),
     buildAuthorizeUrl: ({ state }) => `https://github.com/login/oauth/authorize?state=${state}`,
     exchangeCode: notUsed("exchangeCode"),
+    refreshUserToken: notUsed("refreshUserToken"),
     getAuthenticatedUser: notUsed("getAuthenticatedUser"),
     postIssueComment: notUsed("postIssueComment"),
     postDiscussionComment: notUsed("postDiscussionComment"),
@@ -247,6 +249,50 @@ Deno.test("GET /draft returns 400 on invalid params", async () => {
     headers: { cookie: await sessionCookie() },
   });
   assertEquals(res.status, 400);
+});
+
+Deno.test("POST /draft refreshes an about-to-expire token before posting", async () => {
+  let refreshedWith: string | null = null;
+  let postedToken: string | null = null;
+  const github = fakeGitHub({
+    refreshUserToken: (rt) => {
+      refreshedWith = rt;
+      return Promise.resolve({
+        accessToken: "ghu_fresh",
+        refreshToken: "ghr_next",
+        expiresInSeconds: 28800,
+      });
+    },
+    postIssueComment: (token) => {
+      postedToken = token;
+      return Promise.resolve({ htmlUrl: "https://github.com/dtinth/claw/issues/5#issuecomment-1" });
+    },
+  });
+  // session with a refresh token and an already-expired access token
+  const cookie = await encodeSession(
+    {
+      login: "dtinth",
+      accessToken: "ghu_stale",
+      refreshToken: "ghr_old",
+      accessTokenExpiresAt: new Date(Date.now() - 1000).toISOString(),
+      createdAt: new Date().toISOString(),
+    },
+    config.jwtSecret,
+    3600,
+  );
+  const form = new URLSearchParams({ repo: "dtinth/claw", kind: "issue", number: "5", body: "hi" });
+  const res = await makeApp(github).request("/draft", {
+    method: "POST",
+    headers: {
+      cookie: `claw_session=${cookie}`,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body: form.toString(),
+  });
+  assertEquals(res.status, 200);
+  assertEquals(refreshedWith, "ghr_old");
+  assertEquals(postedToken, "ghu_fresh"); // posted with the refreshed token
+  assertStringIncludes(res.headers.get("set-cookie") ?? "", "claw_session="); // re-issued
 });
 
 Deno.test("POST /draft posts an issue comment as the user", async () => {

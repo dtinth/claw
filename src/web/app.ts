@@ -89,6 +89,47 @@ export function createApp(deps: AppDeps) {
   app.use("/jwt", requireSession);
   app.use("/draft", requireSession);
 
+  async function setSessionCookie(c: Context<{ Variables: Variables }>, session: Session) {
+    const cookie = await encodeSession(session, config.jwtSecret, SESSION_TTL_SECONDS);
+    setCookie(c, SESSION_COOKIE, cookie, {
+      httpOnly: true,
+      secure,
+      sameSite: "Lax",
+      path: "/",
+      maxAge: SESSION_TTL_SECONDS,
+    });
+  }
+
+  // Refresh the GitHub user token if it is about to expire and we hold a
+  // refresh token (GitHub App user tokens expire ~8h; OAuth App tokens usually
+  // don't, in which case this is a no-op). Re-issues the session cookie.
+  async function refreshIfNeeded(
+    c: Context<{ Variables: Variables }>,
+    session: Session,
+  ): Promise<Session> {
+    if (!session.refreshToken || !session.accessTokenExpiresAt) return session;
+    const expiresMs = Date.parse(session.accessTokenExpiresAt);
+    if (Number.isNaN(expiresMs) || expiresMs - Date.now() > 60_000) return session;
+    try {
+      const refreshed = await github.refreshUserToken(session.refreshToken);
+      const next: Session = {
+        login: session.login,
+        accessToken: refreshed.accessToken,
+        createdAt: session.createdAt,
+      };
+      if (refreshed.refreshToken) next.refreshToken = refreshed.refreshToken;
+      if (refreshed.expiresInSeconds !== undefined) {
+        next.accessTokenExpiresAt = new Date(Date.now() + refreshed.expiresInSeconds * 1000)
+          .toISOString();
+      }
+      await setSessionCookie(c, next);
+      return next;
+    } catch (error) {
+      console.error("claw: token refresh failed", error);
+      return session; // fall through; a GitHub 401 will then prompt re-login
+    }
+  }
+
   // --- health -------------------------------------------------------------
 
   app.get("/healthz", (c) => c.text("ok"));
@@ -118,7 +159,14 @@ export function createApp(deps: AppDeps) {
     const cookieOpts = { httpOnly: true, secure, sameSite: "Lax", path: "/", maxAge: 600 } as const;
     setCookie(c, STATE_COOKIE, state, cookieOpts);
     setCookie(c, VERIFIER_COOKIE, verifier, cookieOpts);
-    return c.redirect(github.buildAuthorizeUrl({ state, redirectUri, codeChallenge: challenge }));
+    return c.redirect(
+      github.buildAuthorizeUrl({
+        state,
+        redirectUri,
+        codeChallenge: challenge,
+        scopes: config.oauthScopes,
+      }),
+    );
   });
 
   app.get("/auth/callback", async (c) => {
@@ -180,14 +228,7 @@ export function createApp(deps: AppDeps) {
         .toISOString();
     }
 
-    const cookie = await encodeSession(session, config.jwtSecret, SESSION_TTL_SECONDS);
-    setCookie(c, SESSION_COOKIE, cookie, {
-      httpOnly: true,
-      secure,
-      sameSite: "Lax",
-      path: "/",
-      maxAge: SESSION_TTL_SECONDS,
-    });
+    await setSessionCookie(c, session);
     return c.redirect("/");
   });
 
@@ -354,7 +395,7 @@ export function createApp(deps: AppDeps) {
   });
 
   app.post("/draft", async (c) => {
-    const session = c.get("session");
+    const session = await refreshIfNeeded(c, c.get("session"));
     const form = await c.req.parseBody();
     const parsed = parseDraftParams(formToParams(form));
     if ("error" in parsed) {
