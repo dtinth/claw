@@ -1,5 +1,5 @@
 import { assertEquals } from "@std/assert";
-import { cachePath, isFresh, readCache, writeCache } from "./cache.ts";
+import { cachePath, clearCache, isFresh, readCache, writeCache } from "./cache.ts";
 
 async function withTempDir(fn: (dir: string) => Promise<void>) {
   const dir = await Deno.makeTempDir();
@@ -68,4 +68,20 @@ Deno.test("isFresh is false once expired", () => {
 Deno.test("isFresh is false for an unparseable expiry", () => {
   const entry = { token: "t", expiresAt: "not a date" };
   assertEquals(isFresh(entry, new Date()), false);
+});
+
+Deno.test("clearCache removes a cached entry", async () => {
+  await withTempDir(async (dir) => {
+    await writeCache(dir, "dtinth/claw", { token: "ghs_x", expiresAt: "2026-07-21T01:00:00Z" });
+    await clearCache(dir, "dtinth/claw");
+    assertEquals(await readCache(dir, "dtinth/claw"), null);
+  });
+});
+
+Deno.test("clearCache is a no-op when there is nothing cached", async () => {
+  await withTempDir(async (dir) => {
+    // Must not throw even though the cache dir/file was never created.
+    await clearCache(dir, "dtinth/claw");
+    assertEquals(await readCache(dir, "dtinth/claw"), null);
+  });
 });

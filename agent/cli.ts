@@ -5,6 +5,7 @@
  * processes. Filesystem reads/writes (grants, cache) are the exception: they
  * go through the real Deno fs directly, exercised in tests via temp dirs.
  */
+import { clearCache } from "./cache.ts";
 import { loadConfigOrEmpty, setBaseUrl } from "./config_store.ts";
 import { loadGrants, upsertGrant } from "./grants.ts";
 import { decodeClawJwtPayload } from "./jwt_decode.ts";
@@ -135,6 +136,9 @@ async function cmdGrant(args: string[], rt: Runtime): Promise<number> {
   const paths = resolvePaths(rt.env);
   const path = `${paths.configDir}/grants.json`;
   const { replaced } = await upsertGrant(path, decoded.repo, token);
+  // A still-unexpired cached token would otherwise keep being served under
+  // the old grant for up to an hour after this one replaces it.
+  await clearCache(paths.cacheDir, decoded.repo);
 
   const expiryText = decoded.expiresAt ? decoded.expiresAt.toISOString() : "unknown";
   rt.stdout(

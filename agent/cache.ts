@@ -50,6 +50,20 @@ export async function writeCache(
   }
 }
 
+/**
+ * Remove the cached token for `repo`, if any. Used when the underlying grant
+ * changes (`claw grant`) — a still-unexpired cached token would otherwise
+ * keep being served for up to an hour after the grant it was minted under
+ * was replaced.
+ */
+export async function clearCache(cacheDir: string, repo: string): Promise<void> {
+  try {
+    await Deno.remove(cachePath(cacheDir, repo));
+  } catch (error) {
+    if (!(error instanceof Deno.errors.NotFound)) throw error;
+  }
+}
+
 /** Whether `entry` has more than the safety margin left before it expires. */
 export function isFresh(entry: CachedToken, now: Date): boolean {
   const expires = Date.parse(entry.expiresAt);

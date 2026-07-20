@@ -1,4 +1,5 @@
 import { assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
+import { readCache, writeCache } from "./cache.ts";
 import { runCli } from "./cli.ts";
 import type { Runtime } from "./cli.ts";
 
@@ -128,6 +129,24 @@ Deno.test("grant: reports 'updated' when a grant already exists for that repo", 
 
   assertEquals(code, 0);
   assertStringIncludes(stdout.join(""), "updated the grant for dtinth/claw");
+});
+
+Deno.test("grant: clears any cached token for the repo (a new grant invalidates it)", async () => {
+  const configDir = await Deno.makeTempDir();
+  const cacheDir = await Deno.makeTempDir();
+  await writeCache(cacheDir, "dtinth/claw", {
+    token: "ghs_stale",
+    expiresAt: "2099-01-01T00:00:00Z", // still "fresh" by expiry alone
+  });
+  const token = fakeClawJwt({ sub: "dtinth/claw" });
+  const { rt } = makeFakeRuntime({
+    env: { HOME: "/home/dtinth", CLAW_CONFIG_DIR: configDir, CLAW_CACHE_DIR: cacheDir },
+  });
+
+  const code = await runCli(["grant", token], rt);
+
+  assertEquals(code, 0);
+  assertEquals(await readCache(cacheDir, "dtinth/claw"), null);
 });
 
 Deno.test("grant: fails cleanly on a malformed token", async () => {
