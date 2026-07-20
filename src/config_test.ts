@@ -10,7 +10,6 @@ function fullEnv(overrides: Record<string, string | undefined> = {}) {
     GITHUB_CLIENT_ID: "Iv1.abc",
     GITHUB_CLIENT_SECRET: "clientsecret",
     CLAW_JWT_SECRET: "jwtsecret",
-    SESSION_SECRET: "sessionsecret",
     BASE_URL: "https://claw.example.com/",
     ...overrides,
   };

@@ -11,7 +11,6 @@ const config: Config = {
   clientId: "Iv1.client",
   clientSecret: "secret",
   jwtSecret: "jwt-secret",
-  sessionSecret: "session-secret",
   baseUrl: "https://claw.example.com",
   allowedLogin: "dtinth",
   port: 8000,

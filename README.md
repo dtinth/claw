@@ -68,7 +68,6 @@ All configuration comes from environment variables:
 | `GITHUB_CLIENT_ID` | ✅ | The app's OAuth client id. |
 | `GITHUB_CLIENT_SECRET` | ✅ | The app's OAuth client secret. |
 | `CLAW_JWT_SECRET` | ✅ | Secret used to sign intermediary claw JWTs (HS256). |
-| `SESSION_SECRET` | ✅ | Secret associated with browser sessions. |
 | `BASE_URL` | ✅ | Public base URL, e.g. `https://claw.example.com`. |
 | `ALLOWED_LOGIN` | — | The single GitHub login allowed to use claw. Default `dtinth`. |
 | `PORT` | — | Port to listen on. Default `8000`. |
@@ -96,7 +95,7 @@ All configuration comes from environment variables:
 ```sh
 export GITHUB_APP_ID=… GITHUB_APP_PRIVATE_KEY="$(cat key.pem)" \
        GITHUB_CLIENT_ID=… GITHUB_CLIENT_SECRET=… \
-       CLAW_JWT_SECRET=… SESSION_SECRET=… BASE_URL=http://localhost:8000
+       CLAW_JWT_SECRET=… BASE_URL=http://localhost:8000
 deno task start
 ```
 

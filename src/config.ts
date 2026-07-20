@@ -18,8 +18,6 @@ export interface Config {
   clientSecret: string;
   /** Secret used to sign intermediary claw JWTs (`CLAW_JWT_SECRET`). */
   jwtSecret: string;
-  /** Secret used to sign session cookies (`SESSION_SECRET`). */
-  sessionSecret: string;
   /** Public base URL, without trailing slash (`BASE_URL`). */
   baseUrl: string;
   /** The single GitHub login permitted to use claw (`ALLOWED_LOGIN`). */
@@ -80,7 +78,6 @@ export function loadConfig(env: Env): Config {
   const clientId = required(env, "GITHUB_CLIENT_ID", problems);
   const clientSecret = required(env, "GITHUB_CLIENT_SECRET", problems);
   const jwtSecret = required(env, "CLAW_JWT_SECRET", problems);
-  const sessionSecret = required(env, "SESSION_SECRET", problems);
   const rawBaseUrl = required(env, "BASE_URL", problems);
 
   let privateKeyPem = "";
@@ -125,7 +122,6 @@ export function loadConfig(env: Env): Config {
     clientId,
     clientSecret,
     jwtSecret,
-    sessionSecret,
     baseUrl,
     allowedLogin,
     port,

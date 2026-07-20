@@ -17,7 +17,13 @@ import type { Session, Store } from "../store.ts";
 import type { GitHubClient } from "../github/client.ts";
 import { type ClawGrant, ClawJwtError, createClawJwt, verifyClawJwt } from "../jwt.ts";
 import { parseRepo } from "../github/repo.ts";
-import { isEmptyPermissions, parsePermissions, PERMISSION_CATALOG } from "../permissions.ts";
+import {
+  formatPermissions,
+  isEmptyPermissions,
+  parsePermissions,
+  PERMISSION_CATALOG,
+  type Permissions,
+} from "../permissions.ts";
 import { escapeHtml, layout } from "./html.ts";
 
 const SESSION_COOKIE = "claw_session";
@@ -55,6 +61,20 @@ export function createApp(deps: AppDeps) {
     if (!session || session.login !== config.allowedLogin) return null;
     return session;
   }
+
+  // Guard for browser routes: resolve the session once, redirect to login if
+  // absent, and expose it to handlers via c.get("session").
+  const requireSession = async (
+    c: Context<{ Variables: Variables }>,
+    next: () => Promise<void>,
+  ) => {
+    const session = await currentSession(c);
+    if (!session) return c.redirect("/auth/login");
+    c.set("session", session);
+    await next();
+  };
+  app.use("/jwt", requireSession);
+  app.use("/drafts/*", requireSession);
 
   // --- health -------------------------------------------------------------
 
@@ -166,9 +186,6 @@ export function createApp(deps: AppDeps) {
   // --- mint a claw JWT (browser, session-authenticated) -------------------
 
   app.post("/jwt", async (c) => {
-    const session = await currentSession(c);
-    if (!session) return c.redirect("/auth/login");
-
     const form = await c.req.parseBody();
     const repo = String(form.repo ?? "").trim();
     const amount = Number(form.lifetime_amount ?? "0");
@@ -182,7 +199,9 @@ export function createApp(deps: AppDeps) {
     }
 
     try {
-      parseRepo(repo);
+      // createClawJwt is the authoritative gate for repo and lifetime; here we
+      // only decode the form shape (unit → seconds) and give a friendlier
+      // message for the empty-permissions case.
       const permissions = parsePermissions(rawPerms);
       if (isEmptyPermissions(permissions)) {
         throw new Error(
@@ -191,9 +210,6 @@ export function createApp(deps: AppDeps) {
       }
       const unitSeconds = unit === "minutes" ? 60 : unit === "hours" ? 3600 : 86400;
       const ttlSeconds = Math.round(amount * unitSeconds);
-      if (!Number.isFinite(ttlSeconds) || ttlSeconds <= 0) {
-        throw new Error("lifetime must be a positive number");
-      }
       const params: Parameters<typeof createClawJwt>[0] = { repo, permissions, ttlSeconds };
       if (label) params.label = label;
       const jwt = await createClawJwt(params, config.jwtSecret);
@@ -268,16 +284,13 @@ export function createApp(deps: AppDeps) {
   // --- browser: review + post a draft -------------------------------------
 
   app.get("/drafts/:id", async (c) => {
-    const session = await currentSession(c);
-    if (!session) return c.redirect("/auth/login");
     const draft = await store.getDraft(c.req.param("id"));
     if (!draft) return c.html(layout("claw — not found", errorBlock("Draft not found.")), 404);
     return c.html(layout("claw — review draft", draftPage(draft, config.baseUrl)));
   });
 
   app.post("/drafts/:id/post", async (c) => {
-    const session = await currentSession(c);
-    if (!session) return c.redirect("/auth/login");
+    const session = c.get("session");
     const id = c.req.param("id");
     const draft = await store.getDraft(id);
     if (!draft) return c.html(layout("claw — not found", errorBlock("Draft not found.")), 404);
@@ -322,8 +335,6 @@ export function createApp(deps: AppDeps) {
   });
 
   app.post("/drafts/:id/dismiss", async (c) => {
-    const session = await currentSession(c);
-    if (!session) return c.redirect("/auth/login");
     const id = c.req.param("id");
     const draft = await store.getDraft(id);
     if (draft && draft.status === "pending") {
@@ -338,13 +349,12 @@ export function createApp(deps: AppDeps) {
 // --- input parsing ---------------------------------------------------------
 
 function formatExchangeLog(grant: ClawGrant, installationExpires: string): string {
-  const perms = Object.entries(grant.permissions).map(([k, v]) => `${k}:${v}`).join(",");
   return [
     "claw token-exchange",
     `jti=${grant.jti}`,
     `repo=${grant.repo}`,
     `label=${JSON.stringify(grant.label)}`,
-    `permissions=${perms}`,
+    `permissions=${formatPermissions(grant.permissions)}`,
     `jwt_expires=${grant.expiresAt.toISOString()}`,
     `installation_expires=${installationExpires}`,
     `at=${new Date().toISOString()}`,
@@ -483,11 +493,11 @@ function dashboard(
 function mintedTokenPage(
   jwt: string,
   repo: string,
-  permissions: Record<string, string>,
+  permissions: Permissions,
   ttlSeconds: number,
   baseUrl: string,
 ): string {
-  const perms = Object.entries(permissions).map(([k, v]) => `${k}:${v}`).join(", ");
+  const perms = formatPermissions(permissions);
   const days = (ttlSeconds / 86400).toFixed(2);
   return `
   <div class="card">

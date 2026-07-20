@@ -80,3 +80,8 @@ export function parsePermissions(input: Record<string, string>): Permissions {
 export function isEmptyPermissions(perms: Permissions): boolean {
   return Object.keys(perms).length === 0;
 }
+
+/** Render a permission set as a compact `name:level, …` string for display/logs. */
+export function formatPermissions(perms: Permissions): string {
+  return Object.entries(perms).map(([name, level]) => `${name}:${level}`).join(", ");
+}
