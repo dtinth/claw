@@ -112,11 +112,14 @@ All configuration comes from environment variables:
    `${BASE_URL}/auth/callback`.
 4. Install the app on the repositories you want to reach.
 
-> **A note on PKCE:** GitHub's OAuth does not support PKCE. claw is a
-> confidential client (it holds the client secret server-side), so it uses the
-> standard authorization-code flow hardened with a `state` parameter and
-> httpOnly session cookies — the equivalent protection PKCE gives public
-> clients.
+> **A note on PKCE:** GitHub supports PKCE (S256) for OAuth and GitHub App
+> authentication, but still requires the `client_secret` at the token exchange
+> and does not send CORS headers on the token endpoint — so a pure browser-only
+> flow isn't possible. claw is therefore a confidential, server-side client: it
+> performs the code exchange itself and keeps the user token in an httpOnly
+> session (never exposed to page JavaScript). It uses PKCE (`code_challenge` on
+> the authorize request, `code_verifier` at exchange) together with a `state`
+> parameter as defense-in-depth against code interception and CSRF.
 
 ## Running locally
 

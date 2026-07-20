@@ -52,8 +52,10 @@ export interface GitHubClientDeps {
 /** claw's GitHub client surface. */
 export interface GitHubClient {
   mintRepoToken(repo: string, permissions: Permissions): Promise<InstallationToken>;
-  buildAuthorizeUrl(params: { state: string; redirectUri: string }): string;
-  exchangeCode(params: { code: string; redirectUri: string }): Promise<UserToken>;
+  buildAuthorizeUrl(params: { state: string; redirectUri: string; codeChallenge?: string }): string;
+  exchangeCode(
+    params: { code: string; redirectUri: string; codeVerifier?: string },
+  ): Promise<UserToken>;
   getAuthenticatedUser(accessToken: string): Promise<{ login: string; id: number }>;
   postIssueComment(
     accessToken: string,
@@ -176,15 +178,26 @@ export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
       };
     },
 
-    buildAuthorizeUrl({ state, redirectUri }) {
+    buildAuthorizeUrl({ state, redirectUri, codeChallenge }) {
       const url = new URL(`${oauth}/login/oauth/authorize`);
       url.searchParams.set("client_id", deps.clientId);
       url.searchParams.set("redirect_uri", redirectUri);
       url.searchParams.set("state", state);
+      if (codeChallenge) {
+        url.searchParams.set("code_challenge", codeChallenge);
+        url.searchParams.set("code_challenge_method", "S256");
+      }
       return url.toString();
     },
 
-    async exchangeCode({ code, redirectUri }) {
+    async exchangeCode({ code, redirectUri, codeVerifier }) {
+      const body: Record<string, string> = {
+        client_id: deps.clientId,
+        client_secret: deps.clientSecret,
+        code,
+        redirect_uri: redirectUri,
+      };
+      if (codeVerifier) body.code_verifier = codeVerifier;
       const response = await fetchFn(`${oauth}/login/oauth/access_token`, {
         method: "POST",
         headers: {
@@ -192,12 +205,7 @@ export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
           "content-type": "application/json",
           "User-Agent": USER_AGENT,
         },
-        body: JSON.stringify({
-          client_id: deps.clientId,
-          client_secret: deps.clientSecret,
-          code,
-          redirect_uri: redirectUri,
-        }),
+        body: JSON.stringify(body),
       });
       if (!response.ok) {
         throw new GitHubApiError(

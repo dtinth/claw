@@ -117,6 +117,30 @@ Deno.test("buildAuthorizeUrl includes client_id, redirect_uri and state", () => 
   assertEquals(url.searchParams.get("redirect_uri"), "https://claw.example.com/auth/callback");
 });
 
+Deno.test("buildAuthorizeUrl includes the PKCE challenge when provided", () => {
+  const client = makeClient(fetch);
+  const url = new URL(client.buildAuthorizeUrl({
+    state: "s",
+    redirectUri: "https://c/cb",
+    codeChallenge: "the-challenge",
+  }));
+  assertEquals(url.searchParams.get("code_challenge"), "the-challenge");
+  assertEquals(url.searchParams.get("code_challenge_method"), "S256");
+});
+
+Deno.test("exchangeCode forwards the PKCE code_verifier", async () => {
+  const { fn, calls } = fakeFetch({
+    "POST /login/oauth/access_token": () => json({ access_token: "ghu_x" }),
+  });
+  const client = makeClient(fn);
+  await client.exchangeCode({
+    code: "c",
+    redirectUri: "https://c/cb",
+    codeVerifier: "the-verifier",
+  });
+  assertEquals((calls[0]!.body as { code_verifier: string }).code_verifier, "the-verifier");
+});
+
 Deno.test("exchangeCode returns the user token", async () => {
   const { fn, calls } = fakeFetch({
     "POST /login/oauth/access_token": () =>
