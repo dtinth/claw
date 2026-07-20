@@ -1,6 +1,6 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import { createApp } from "./app.ts";
-import { createClawJwt } from "../jwt.ts";
+import { createClawJwt, verifyClawJwt } from "../jwt.ts";
 import { openStore, type Store } from "../store.ts";
 import type { Config } from "../config.ts";
 import type { GitHubClient } from "../github/client.ts";
@@ -123,6 +123,47 @@ Deno.test("POST /api/token exchanges a claw JWT for an installation token", asyn
       repo: "dtinth/claw",
       perms: { contents: "read", issues: "write" },
     });
+  });
+});
+
+Deno.test("POST /api/token logs each exchange with the JWT id (jti)", async () => {
+  const github = fakeGitHub({
+    mintRepoToken: (repo, perms) =>
+      Promise.resolve({
+        token: "ghs_scopedtoken",
+        expiresAt: "2026-07-20T01:00:00Z",
+        repository: repo,
+        permissions: perms,
+      }),
+  });
+  await withApp(github, async (app) => {
+    const jwt = await createClawJwt(
+      {
+        repo: "dtinth/claw",
+        permissions: { contents: "read" },
+        ttlSeconds: 3600,
+        label: "agent-x",
+      },
+      config.jwtSecret,
+    );
+    const grant = await verifyClawJwt(jwt, config.jwtSecret);
+
+    const logs: string[] = [];
+    const original = console.log;
+    console.log = (...args: unknown[]) => logs.push(args.map(String).join(" "));
+    try {
+      const res = await app.request("/api/token", {
+        method: "POST",
+        headers: { authorization: `Bearer ${jwt}` },
+      });
+      assertEquals(res.status, 200);
+    } finally {
+      console.log = original;
+    }
+
+    const line = logs.find((l) => l.includes("token-exchange") && l.includes(grant.jti));
+    assertStringIncludes(line ?? "", grant.jti);
+    assertStringIncludes(line ?? "", "dtinth/claw");
   });
 });
 

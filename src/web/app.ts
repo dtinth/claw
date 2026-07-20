@@ -15,7 +15,7 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { Config } from "../config.ts";
 import type { Session, Store } from "../store.ts";
 import type { GitHubClient } from "../github/client.ts";
-import { ClawJwtError, createClawJwt, verifyClawJwt } from "../jwt.ts";
+import { type ClawGrant, ClawJwtError, createClawJwt, verifyClawJwt } from "../jwt.ts";
 import { parseRepo } from "../github/repo.ts";
 import { isEmptyPermissions, parsePermissions, PERMISSION_CATALOG } from "../permissions.ts";
 import { escapeHtml, layout } from "./html.ts";
@@ -222,6 +222,9 @@ export function createApp(deps: AppDeps) {
     try {
       const grant = await verifyClawJwt(jwt, config.jwtSecret);
       const token = await github.mintRepoToken(grant.repo, grant.permissions);
+      // Audit log: there is no revocation list, so every exchange is recorded
+      // (by jti) to the console for after-the-fact traceability.
+      console.log(formatExchangeLog(grant, token.expiresAt));
       return c.json({
         token: token.token,
         expires_at: token.expiresAt,
@@ -229,10 +232,12 @@ export function createApp(deps: AppDeps) {
         permissions: token.permissions,
       });
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`claw token-exchange rejected: ${message}`);
       if (error instanceof ClawJwtError) {
         return c.json({ error: error.message }, 401);
       }
-      return c.json({ error: error instanceof Error ? error.message : String(error) }, 502);
+      return c.json({ error: message }, 502);
     }
   });
 
@@ -331,6 +336,20 @@ export function createApp(deps: AppDeps) {
 }
 
 // --- input parsing ---------------------------------------------------------
+
+function formatExchangeLog(grant: ClawGrant, installationExpires: string): string {
+  const perms = Object.entries(grant.permissions).map(([k, v]) => `${k}:${v}`).join(",");
+  return [
+    "claw token-exchange",
+    `jti=${grant.jti}`,
+    `repo=${grant.repo}`,
+    `label=${JSON.stringify(grant.label)}`,
+    `permissions=${perms}`,
+    `jwt_expires=${grant.expiresAt.toISOString()}`,
+    `installation_expires=${installationExpires}`,
+    `at=${new Date().toISOString()}`,
+  ].join(" ");
+}
 
 function bearer(header: string | undefined): string | null {
   if (!header) return null;
