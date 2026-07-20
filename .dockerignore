@@ -1,0 +1,9 @@
+.git
+.github
+*.md
+.gitignore
+cov/
+coverage/
+.DS_Store
+.idea/
+.vscode/
