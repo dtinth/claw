@@ -32,29 +32,18 @@ curl -s -X POST https://claw.example.com/api/token \
 
 ### 2. Comment drafts you post yourself
 
-An agent shouldn't comment on public issues as itself. Instead it submits a
-**draft**, and you review and post it under your own GitHub identity (via the
-app's user-to-server token):
+An agent shouldn't comment on public issues as itself. Instead it hands you a
+**prefilled link** — no API call, nothing stored:
 
-```sh
-curl -s -X POST https://claw.example.com/api/drafts \
-  -H "Authorization: Bearer <a claw JWT>" \
-  -H "content-type: application/json" \
-  -d '{
-    "repo": "owner/repo",
-    "target": { "kind": "issue", "issueNumber": 42 },
-    "body": "Thanks for the report — fixed in #45."
-  }'
-# => { "id": "…", "url": "https://claw.example.com/drafts/…" }
+```
+https://claw.example.com/draft?repo=owner/repo&issue=42&body=Thanks%20—%20fixed%20in%20%2345
 ```
 
-`target` is either `{ "kind": "issue", "issueNumber": N }` (issues and pull
-requests) or `{ "kind": "discussion", "discussionNumber": N, "replyToId": "…" }`
-(`replyToId` optional).
-
-The agent hands you that URL. You open it, review the text, and click **Post as
-me** — issues and pull requests go through the REST API, discussions through
-GraphQL (`addDiscussionComment`, with optional `replyToId`).
+You open it (logged in), see an **editable, prefilled comment form**, tweak the
+text if you like, and click **Post as me**. Issues and pull requests go through
+the REST API; use `discussion=N` (with optional `replyTo=<node-id>`) instead of
+`issue=N` for a discussion comment via GraphQL. The comment is published under
+your own GitHub identity (the app's user-to-server token).
 
 ### 3. Comment relay via webhooks + Grist
 
@@ -94,7 +83,6 @@ All configuration comes from environment variables:
 | `BASE_URL` | ✅ | Public base URL, e.g. `https://claw.example.com`. |
 | `ALLOWED_LOGIN` | — | The single GitHub login allowed to use claw. Default `dtinth`. |
 | `PORT` | — | Port to listen on. Default `8000`. |
-| `DENO_KV_PATH` | — | Path to the Deno KV SQLite file. Default is Deno's location; the Docker image uses `/data/kv.sqlite`. |
 | `GITHUB_WEBHOOK_SECRET` | — | Webhook secret for `/webhook`. Enables the comment relay together with the `GRIST_*` vars. |
 | `GRIST_API_URL` | — | Grist base API URL including the document id, e.g. `https://grist.example.com/api/docs/<docId>`. |
 | `GRIST_API_KEY` | — | Grist API key (sent as a bearer token). Required when `GRIST_API_URL` is set. |
@@ -134,9 +122,10 @@ deno task start
 The repository ships a [`Dockerfile`](Dockerfile). Any platform that builds and
 runs a Docker image works; pushing to `main` triggers a deploy in this setup.
 
-Deno KV persists to a local SQLite file. Mount a volume at `/data` (the image's
-`DENO_KV_PATH`) to keep drafts and sessions across redeploys; without one they
-are ephemeral and you simply log in again.
+claw is **stateless** — no database, no volume. Your browser session lives in an
+encrypted cookie (3-day expiry, so you re-authenticate every few days), comment
+drafts are just prefilled links, and relayed comments live in Grist. Redeploy
+freely; the only thing lost is your login cookie's validity.
 
 ## Development
 
@@ -157,7 +146,9 @@ deno task ci      # fmt --check + lint + check + test (what CI runs)
 | `src/config.ts` | Load and validate configuration from the environment. |
 | `src/permissions.ts` | The delegatable permission catalog and validation. |
 | `src/jwt.ts` | Mint and verify intermediary claw JWTs. |
-| `src/store.ts` | Deno KV persistence for drafts and sessions. |
+| `src/session.ts` | Encrypted (JWE) stateless session cookie. |
+| `src/draft.ts` | Parse prefilled comment-draft links. |
+| `src/pkce.ts` | PKCE verifier/challenge helpers. |
 | `src/github/` | Repo parsing, app JWT, and the GitHub API client. |
 | `src/web/` | The Hono app, routes and server-rendered views. |
 | `src/main.ts` | Wire everything together and serve. |

@@ -5,14 +5,12 @@
  * GitHub client and the Hono app, and starts listening.
  */
 import { loadConfig } from "./config.ts";
-import { openStore } from "./store.ts";
 import { createGitHubClient } from "./github/client.ts";
 import { createGristClient } from "./grist/client.ts";
 import { createApp } from "./web/app.ts";
 
-export async function main(): Promise<void> {
+export function main(): void {
   const config = loadConfig(Deno.env.toObject());
-  const store = await openStore(config.kvPath);
   const github = createGitHubClient({
     appId: config.appId,
     privateKeyPem: config.privateKeyPem,
@@ -20,7 +18,7 @@ export async function main(): Promise<void> {
     clientSecret: config.clientSecret,
   });
   const grist = config.grist ? createGristClient(config.grist) : undefined;
-  const app = createApp({ config, store, github, ...(grist ? { grist } : {}) });
+  const app = createApp({ config, github, ...(grist ? { grist } : {}) });
 
   Deno.serve({ port: config.port, hostname: "0.0.0.0" }, app.fetch);
   console.log(
@@ -30,5 +28,5 @@ export async function main(): Promise<void> {
 }
 
 if (import.meta.main) {
-  await main();
+  main();
 }

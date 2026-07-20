@@ -3,9 +3,9 @@
   "version": "0.0.0",
   "exports": "./src/main.ts",
   "tasks": {
-    "dev": "deno run --watch --allow-net --allow-env --allow-read --allow-write --allow-ffi src/main.ts",
-    "start": "deno run --allow-net --allow-env --allow-read --allow-write --allow-ffi src/main.ts",
-    "test": "deno test --allow-net --allow-env --allow-read --allow-write --allow-ffi",
+    "dev": "deno run --watch --allow-net --allow-env src/main.ts",
+    "start": "deno run --allow-net --allow-env src/main.ts",
+    "test": "deno test --allow-net --allow-env",
     "check": "deno check src/",
     "ci": "deno fmt --check && deno lint && deno check src/ && deno task test"
   },
@@ -15,7 +15,6 @@
     "hono/cookie": "jsr:@hono/hono@^4.12.31/cookie",
     "jose": "npm:jose@^6.2.3"
   },
-  "unstable": ["kv"],
   "compilerOptions": {
     "strict": true,
     "noImplicitOverride": true,
