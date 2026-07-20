@@ -15,7 +15,7 @@ import { type Context, Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { Config } from "../config.ts";
 import { decodeSession, encodeSession, type Session } from "../session.ts";
-import type { GitHubClient } from "../github/client.ts";
+import { GitHubApiError, type GitHubClient } from "../github/client.ts";
 import type { CommentQuery, GristClient } from "../grist/client.ts";
 import { parseIssueCommentEvent, verifyWebhookSignature } from "../webhook.ts";
 import { type ClawGrant, ClawJwtError, createClawJwt, verifyClawJwt } from "../jwt.ts";
@@ -144,7 +144,8 @@ export function createApp(deps: AppDeps) {
           "claw — login failed",
           errorBlock(error instanceof Error ? error.message : String(error)),
         ),
-        502,
+        // Not 502/504 — Cloudflare would replace the body with its own page.
+        200,
       );
     }
 
@@ -257,7 +258,8 @@ export function createApp(deps: AppDeps) {
       if (error instanceof ClawJwtError) {
         return c.json({ error: error.message }, 401);
       }
-      return c.json({ error: message }, 502);
+      // 500 not 502: Cloudflare masks origin 502/504 with its own error page.
+      return c.json({ error: message }, 500);
     }
   });
 
@@ -292,7 +294,7 @@ export function createApp(deps: AppDeps) {
       console.warn(
         `claw webhook upsert failed: ${error instanceof Error ? error.message : String(error)}`,
       );
-      return c.json({ error: "failed to store comment" }, 502);
+      return c.json({ error: "failed to store comment" }, 500);
     }
     return c.json({ ok: true, comment_id: record.Comment_ID }, 202);
   });
@@ -329,7 +331,7 @@ export function createApp(deps: AppDeps) {
     try {
       return c.json({ comments: await grist.queryComments(query) });
     } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : String(error) }, 502);
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
     }
   });
 
@@ -378,12 +380,27 @@ export function createApp(deps: AppDeps) {
       }
       return c.html(layout("claw — posted", postedPage(postedUrl, repo, target)));
     } catch (error) {
+      // A GitHub 401 almost always means the user-to-server token has expired
+      // (GitHub Apps expire them ~8h by default). Clear the session and prompt
+      // a fresh login rather than surfacing a raw error.
+      if (error instanceof GitHubApiError && error.status === 401) {
+        deleteCookie(c, SESSION_COOKIE, { path: "/" });
+        return c.html(
+          layout(
+            "claw — session expired",
+            errorBlock("Your GitHub session has expired. Log in again, then retry the post.") +
+              `<p><a href="/auth/login"><button>Log in with GitHub</button></a></p>`,
+          ),
+          // NB: not 502/504 — Cloudflare replaces those bodies with its own page.
+          200,
+        );
+      }
       return c.html(
         layout(
           "claw — post failed",
           errorBlock(error instanceof Error ? error.message : String(error)) + backLink(),
         ),
-        502,
+        200,
       );
     }
   });
@@ -455,6 +472,51 @@ function permissionSelects(): string {
   }).join("\n");
 }
 
+/**
+ * One-click permission presets for the mint form. Each fills the dropdowns and
+ * remains fully editable afterwards. Keys must be names in PERMISSION_CATALOG.
+ */
+const PERMISSION_PRESETS = [
+  {
+    id: "readonly",
+    label: "Read-only",
+    perms: { contents: "read", issues: "read", pull_requests: "read" },
+  },
+  {
+    id: "agent",
+    label: "Coding agent",
+    perms: { contents: "write", issues: "write", pull_requests: "write" },
+  },
+  { id: "issues-prs", label: "Issues & PRs", perms: { issues: "write", pull_requests: "write" } },
+  { id: "clear", label: "Clear", perms: {} },
+] as const;
+
+function permissionPresetButtons(): string {
+  return PERMISSION_PRESETS.map((p) =>
+    `<button type="button" class="preset" data-claw-preset="${p.id}">${
+      escapeHtml(p.label)
+    }</button>`
+  ).join("");
+}
+
+/** Inline script that applies a preset to the permission selects on click. */
+function permissionPresetScript(): string {
+  const map = Object.fromEntries(PERMISSION_PRESETS.map((p) => [p.id, p.perms]));
+  return `<script>
+(function () {
+  var presets = ${JSON.stringify(map)};
+  document.querySelectorAll("[data-claw-preset]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var preset = presets[btn.getAttribute("data-claw-preset")] || {};
+      document.querySelectorAll('select[name^="perm_"]').forEach(function (sel) {
+        sel.value = preset[sel.name.slice(5)] || "";
+      });
+    });
+  });
+})();
+</script>`;
+}
+
 function dashboard(session: Session, allowedLogin: string, baseUrl: string): string {
   return `
   <p>Signed in as <strong>@${escapeHtml(session.login)}</strong>.
@@ -485,6 +547,8 @@ function dashboard(session: Session, allowedLogin: string, baseUrl: string): str
       </div>
 
       <label>Permissions</label>
+      <p class="muted" style="margin:.2rem 0">Presets fill the dropdowns — tweak after:</p>
+      <div class="preset-row">${permissionPresetButtons()}</div>
       <div class="grid">${permissionSelects()}</div>
 
       <label for="label">Label (optional)</label>
@@ -497,7 +561,8 @@ function dashboard(session: Session, allowedLogin: string, baseUrl: string): str
   <h2>Comment drafts</h2>
   <p class="muted">An agent proposes a comment by handing you a link like
     <code>${escapeHtml(baseUrl)}/draft?repo=owner/repo&amp;issue=42&amp;body=…</code>.
-    Open it to review, edit, and post the comment as yourself.</p>`;
+    Open it to review, edit, and post the comment as yourself.</p>
+  ${permissionPresetScript()}`;
 }
 
 function mintedTokenPage(
