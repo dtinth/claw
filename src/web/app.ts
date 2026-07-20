@@ -1,11 +1,12 @@
 /**
- * claw's HTTP surface, built on Hono.
+ * claw's HTTP surface, built on Hono. Fully stateless — no server-side store.
  *
  * Two audiences:
- *  - **You (dtinth), via the browser** — cookie session (GitHub user-to-server
- *    OAuth). Mint intermediary JWTs; review and post drafted comments.
+ *  - **You, via the browser** — an encrypted (JWE) session cookie holds the
+ *    GitHub user token (GitHub App user-to-server OAuth, PKCE). Mint claw JWTs;
+ *    open prefilled comment-draft links and post them as yourself.
  *  - **Coding agents, via the API** — bearer claw JWT. Exchange it for a
- *    repo-scoped installation token; submit comment drafts for your review.
+ *    repo-scoped installation token; poll relayed comments.
  *
  * All dependencies are injected so the whole app is testable with
  * `app.request()` and fakes.
@@ -13,12 +14,12 @@
 import { type Context, Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { Config } from "../config.ts";
-import type { Session, Store } from "../store.ts";
+import { decodeSession, encodeSession, type Session } from "../session.ts";
 import type { GitHubClient } from "../github/client.ts";
 import type { CommentQuery, GristClient } from "../grist/client.ts";
 import { parseIssueCommentEvent, verifyWebhookSignature } from "../webhook.ts";
 import { type ClawGrant, ClawJwtError, createClawJwt, verifyClawJwt } from "../jwt.ts";
-import { parseRepo } from "../github/repo.ts";
+import { type DraftInput, type DraftTarget, parseDraftParams } from "../draft.ts";
 import {
   formatPermissions,
   isEmptyPermissions,
@@ -32,12 +33,11 @@ import { escapeHtml, layout } from "./html.ts";
 const SESSION_COOKIE = "claw_session";
 const STATE_COOKIE = "claw_oauth_state";
 const VERIFIER_COOKIE = "claw_oauth_verifier";
-const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const SESSION_TTL_SECONDS = 3 * 24 * 60 * 60; // 3 days — you re-authenticate after.
 
 /** Dependencies for the app. */
 export interface AppDeps {
   config: Config;
-  store: Store;
   github: GitHubClient;
   /** Optional Grist client enabling the webhook relay and comment polling. */
   grist?: GristClient;
@@ -52,7 +52,7 @@ function randomToken(): string {
 }
 
 export function createApp(deps: AppDeps) {
-  const { config, store, github, grist } = deps;
+  const { config, github, grist } = deps;
   const secure = config.baseUrl.startsWith("https://");
   const redirectUri = `${config.baseUrl}/auth/callback`;
 
@@ -61,9 +61,9 @@ export function createApp(deps: AppDeps) {
   // --- helpers ------------------------------------------------------------
 
   async function currentSession(c: Context<{ Variables: Variables }>) {
-    const id = getCookie(c, SESSION_COOKIE);
-    if (!id) return null;
-    const session = await store.getSession(id);
+    const cookie = getCookie(c, SESSION_COOKIE);
+    if (!cookie) return null;
+    const session = await decodeSession(cookie, config.jwtSecret);
     if (!session || session.login !== config.allowedLogin) return null;
     return session;
   }
@@ -80,7 +80,7 @@ export function createApp(deps: AppDeps) {
     await next();
   };
   app.use("/jwt", requireSession);
-  app.use("/drafts/*", requireSession);
+  app.use("/draft", requireSession);
 
   // --- health -------------------------------------------------------------
 
@@ -97,8 +97,9 @@ export function createApp(deps: AppDeps) {
          <p><a href="/auth/login"><button>Log in with GitHub</button></a></p>`,
       ));
     }
-    const drafts = await store.listDrafts(20);
-    return c.html(layout("claw — dashboard", dashboard(session, drafts, config.allowedLogin)));
+    return c.html(
+      layout("claw — dashboard", dashboard(session, config.allowedLogin, config.baseUrl)),
+    );
   });
 
   // --- auth ---------------------------------------------------------------
@@ -170,21 +171,18 @@ export function createApp(deps: AppDeps) {
         .toISOString();
     }
 
-    const sessionId = randomToken();
-    await store.putSession(sessionId, session, SESSION_TTL_MS);
-    setCookie(c, SESSION_COOKIE, sessionId, {
+    const cookie = await encodeSession(session, config.jwtSecret, SESSION_TTL_SECONDS);
+    setCookie(c, SESSION_COOKIE, cookie, {
       httpOnly: true,
       secure,
       sameSite: "Lax",
       path: "/",
-      maxAge: Math.floor(SESSION_TTL_MS / 1000),
+      maxAge: SESSION_TTL_SECONDS,
     });
     return c.redirect("/");
   });
 
-  app.post("/auth/logout", async (c) => {
-    const id = getCookie(c, SESSION_COOKIE);
-    if (id) await store.deleteSession(id);
+  app.post("/auth/logout", (c) => {
     deleteCookie(c, SESSION_COOKIE, { path: "/" });
     return c.redirect("/");
   });
@@ -263,30 +261,6 @@ export function createApp(deps: AppDeps) {
     }
   });
 
-  // --- agent API: submit a comment draft ----------------------------------
-
-  app.post("/api/drafts", async (c) => {
-    const jwt = bearer(c.req.header("authorization"));
-    if (!jwt) return c.json({ error: "missing bearer token" }, 401);
-    try {
-      await verifyClawJwt(jwt, config.jwtSecret);
-    } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : String(error) }, 401);
-    }
-
-    let payload: unknown;
-    try {
-      payload = await c.req.json();
-    } catch {
-      return c.json({ error: "invalid JSON body" }, 400);
-    }
-    const parsed = parseDraftInput(payload);
-    if ("error" in parsed) return c.json({ error: parsed.error }, 400);
-
-    const draft = await store.createDraft(parsed.value);
-    return c.json({ id: draft.id, url: `${config.baseUrl}/drafts/${draft.id}` }, 201);
-  });
-
   // --- incoming GitHub webhook: relay comments into Grist -----------------
 
   app.post("/webhook", async (c) => {
@@ -359,66 +333,59 @@ export function createApp(deps: AppDeps) {
     }
   });
 
-  // --- browser: review + post a draft -------------------------------------
+  // --- browser: prefilled comment draft (stateless, from query params) ----
 
-  app.get("/drafts/:id", async (c) => {
-    const draft = await store.getDraft(c.req.param("id"));
-    if (!draft) return c.html(layout("claw — not found", errorBlock("Draft not found.")), 404);
-    return c.html(layout("claw — review draft", draftPage(draft, config.baseUrl)));
+  app.get("/draft", (c) => {
+    const parsed = parseDraftParams(new URL(c.req.url).searchParams);
+    if ("error" in parsed) {
+      return c.html(layout("claw — draft", errorBlock(parsed.error) + backLink()), 400);
+    }
+    return c.html(layout("claw — new comment", draftFormPage(parsed.value)));
   });
 
-  app.post("/drafts/:id/post", async (c) => {
+  app.post("/draft", async (c) => {
     const session = c.get("session");
-    const id = c.req.param("id");
-    const draft = await store.getDraft(id);
-    if (!draft) return c.html(layout("claw — not found", errorBlock("Draft not found.")), 404);
-    if (draft.status !== "pending") return c.redirect(`/drafts/${id}`);
+    const form = await c.req.parseBody();
+    const parsed = parseDraftParams(formToParams(form));
+    if ("error" in parsed) {
+      return c.html(layout("claw — draft", errorBlock(parsed.error) + backLink()), 400);
+    }
+    const { repo, target, body } = parsed.value;
+    if (body.trim() === "") {
+      return c.html(
+        layout("claw — draft", errorBlock("comment body must not be empty") + backLink()),
+        400,
+      );
+    }
 
     try {
-      let url: string;
-      if (draft.target.kind === "issue") {
-        const result = await github.postIssueComment(
+      let postedUrl: string;
+      if (target.kind === "issue") {
+        postedUrl = (await github.postIssueComment(
           session.accessToken,
-          draft.repo,
-          draft.target.issueNumber,
-          draft.body,
-        );
-        url = result.htmlUrl;
+          repo,
+          target.issueNumber,
+          body,
+        )).htmlUrl;
       } else {
-        const result = await github.postDiscussionComment(
+        postedUrl = (await github.postDiscussionComment(
           session.accessToken,
-          draft.repo,
-          draft.target.discussionNumber,
-          draft.body,
-          draft.target.replyToId,
-        );
-        url = result.url;
+          repo,
+          target.discussionNumber,
+          body,
+          target.replyToId,
+        )).url;
       }
-      await store.updateDraft(id, {
-        status: "posted",
-        postedUrl: url,
-        postedAt: new Date().toISOString(),
-      });
-      return c.redirect(`/drafts/${id}`);
+      return c.html(layout("claw — posted", postedPage(postedUrl, repo, target)));
     } catch (error) {
       return c.html(
         layout(
           "claw — post failed",
-          errorBlock(error instanceof Error ? error.message : String(error)) +
-            backLink(`/drafts/${id}`),
+          errorBlock(error instanceof Error ? error.message : String(error)) + backLink(),
         ),
         502,
       );
     }
-  });
-
-  app.post("/drafts/:id/dismiss", async (c) => {
-    const id = c.req.param("id");
-    const draft = await store.getDraft(id);
-    if (draft && draft.status === "pending") {
-      await store.updateDraft(id, { status: "dismissed" });
-    }
-    return c.redirect(`/drafts/${id}`);
   });
 
   return app;
@@ -445,44 +412,19 @@ function bearer(header: string | undefined): string | null {
   return match ? match[1]!.trim() : null;
 }
 
-function parseDraftInput(
-  payload: unknown,
-): { value: { repo: string; target: import("../store.ts").DraftTarget; body: string } } | {
-  error: string;
-} {
-  if (payload === null || typeof payload !== "object") return { error: "body must be an object" };
-  const obj = payload as Record<string, unknown>;
-
-  const repo = typeof obj.repo === "string" ? obj.repo.trim() : "";
-  try {
-    parseRepo(repo);
-  } catch {
-    return { error: "repo must be a valid owner/repo" };
+/** Map a posted draft form back to the query shape parseDraftParams expects. */
+function formToParams(form: Record<string, unknown>): URLSearchParams {
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  const params = new URLSearchParams();
+  params.set("repo", str(form.repo));
+  params.set("body", str(form.body));
+  if (str(form.kind) === "discussion") {
+    params.set("discussion", str(form.number));
+    if (str(form.replyTo)) params.set("replyTo", str(form.replyTo));
+  } else {
+    params.set("issue", str(form.number));
   }
-
-  const body = typeof obj.body === "string" ? obj.body : "";
-  if (body.trim() === "") return { error: "body must not be empty" };
-
-  const target = obj.target as Record<string, unknown> | undefined;
-  if (!target || typeof target !== "object") return { error: "target is required" };
-
-  if (target.kind === "issue") {
-    const n = Number(target.issueNumber);
-    if (!Number.isInteger(n) || n <= 0) {
-      return { error: "target.issueNumber must be a positive integer" };
-    }
-    return { value: { repo, body, target: { kind: "issue", issueNumber: n } } };
-  }
-  if (target.kind === "discussion") {
-    const n = Number(target.discussionNumber);
-    if (!Number.isInteger(n) || n <= 0) {
-      return { error: "target.discussionNumber must be a positive integer" };
-    }
-    const t: import("../store.ts").DraftTarget = { kind: "discussion", discussionNumber: n };
-    if (typeof target.replyToId === "string" && target.replyToId) t.replyToId = target.replyToId;
-    return { value: { repo, body, target: t } };
-  }
-  return { error: 'target.kind must be "issue" or "discussion"' };
+  return params;
 }
 
 // --- views -----------------------------------------------------------------
@@ -495,6 +437,14 @@ function backLink(href = "/"): string {
   return `<p><a href="${escapeHtml(href)}">← Back</a></p>`;
 }
 
+function targetLabel(target: DraftTarget): string {
+  return target.kind === "issue"
+    ? `issue #${target.issueNumber}`
+    : `discussion #${target.discussionNumber}${
+      target.replyToId ? ` (reply to ${escapeHtml(target.replyToId)})` : ""
+    }`;
+}
+
 function permissionSelects(): string {
   return Object.entries(PERMISSION_CATALOG).map(([name, levels]) => {
     const options = ["none", ...levels]
@@ -505,24 +455,7 @@ function permissionSelects(): string {
   }).join("\n");
 }
 
-function dashboard(
-  session: Session,
-  drafts: import("../store.ts").Draft[],
-  allowedLogin: string,
-): string {
-  const draftRows = drafts.length === 0
-    ? `<tr><td colspan="3" class="muted">No drafts yet.</td></tr>`
-    : drafts.map((d) => {
-      const target = d.target.kind === "issue"
-        ? `issue #${d.target.issueNumber}`
-        : `discussion #${d.target.discussionNumber}`;
-      return `<tr>
-        <td><a href="/drafts/${escapeHtml(d.id)}">${escapeHtml(d.repo)} · ${target}</a></td>
-        <td>${escapeHtml(d.status)}</td>
-        <td class="muted">${escapeHtml(d.createdAt)}</td>
-      </tr>`;
-    }).join("\n");
-
+function dashboard(session: Session, allowedLogin: string, baseUrl: string): string {
   return `
   <p>Signed in as <strong>@${escapeHtml(session.login)}</strong>.
     <form class="inline" method="post" action="/auth/logout"><button class="secondary">Log out</button></form>
@@ -561,11 +494,10 @@ function dashboard(
     </form>
   </fieldset>
 
-  <h2>Recent drafts</h2>
-  <table>
-    <thead><tr><th>Target</th><th>Status</th><th>Created</th></tr></thead>
-    <tbody>${draftRows}</tbody>
-  </table>`;
+  <h2>Comment drafts</h2>
+  <p class="muted">An agent proposes a comment by handing you a link like
+    <code>${escapeHtml(baseUrl)}/draft?repo=owner/repo&amp;issue=42&amp;body=…</code>.
+    Open it to review, edit, and post the comment as yourself.</p>`;
 }
 
 function mintedTokenPage(
@@ -593,40 +525,32 @@ function mintedTokenPage(
   ${backLink()}`;
 }
 
-function draftPage(draft: import("../store.ts").Draft, baseUrl: string): string {
-  const target = draft.target.kind === "issue"
-    ? `issue #${draft.target.issueNumber}`
-    : `discussion #${draft.target.discussionNumber}${
-      draft.target.replyToId ? ` (reply to ${escapeHtml(draft.target.replyToId)})` : ""
-    }`;
-
-  if (draft.status === "posted") {
-    return `<div class="card"><p class="ok"><strong>Posted.</strong>
-      <a href="${escapeHtml(draft.postedUrl ?? "#")}">View comment on GitHub →</a></p></div>
-      <h3>Comment</h3><pre>${escapeHtml(draft.body)}</pre>${backLink()}`;
-  }
-  if (draft.status === "dismissed") {
-    return `<div class="card"><p class="muted">This draft was dismissed.</p></div>
-      <h3>Comment</h3><pre>${escapeHtml(draft.body)}</pre>${backLink()}`;
-  }
-
+function draftFormPage(draft: DraftInput): string {
+  const { repo, target, body } = draft;
+  const number = target.kind === "issue" ? target.issueNumber : target.discussionNumber;
+  const replyTo = target.kind === "discussion" && target.replyToId ? target.replyToId : "";
   return `
   <div class="card">
-    <p>An agent drafted this comment for <strong>${escapeHtml(draft.repo)}</strong> · ${target}.</p>
-    <p class="muted">Review it below. Posting uses <em>your</em> GitHub identity.</p>
+    <p>Prefilled comment for <strong>${escapeHtml(repo)}</strong> · ${targetLabel(target)}.</p>
+    <p class="muted">Edit if you like, then post. This is published under <em>your</em> GitHub identity.</p>
   </div>
-  <h3>Comment</h3>
-  <pre>${escapeHtml(draft.body)}</pre>
-  <div class="row">
-    <form method="post" action="/drafts/${escapeHtml(draft.id)}/post">
-      <button type="submit">Post as me</button>
-    </form>
-    <form method="post" action="/drafts/${escapeHtml(draft.id)}/dismiss">
-      <button type="submit" class="secondary">Dismiss</button>
-    </form>
+  <form method="post" action="/draft">
+    <input type="hidden" name="repo" value="${escapeHtml(repo)}">
+    <input type="hidden" name="kind" value="${escapeHtml(target.kind)}">
+    <input type="hidden" name="number" value="${escapeHtml(String(number))}">
+    <input type="hidden" name="replyTo" value="${escapeHtml(replyTo)}">
+    <label for="body">Comment</label>
+    <textarea id="body" name="body" required>${escapeHtml(body)}</textarea>
+    <p><button type="submit">Post as me</button></p>
+  </form>
+  ${backLink()}`;
+}
+
+function postedPage(postedUrl: string, repo: string, target: DraftTarget): string {
+  return `
+  <div class="card">
+    <p class="ok"><strong>Posted</strong> to ${escapeHtml(repo)} · ${targetLabel(target)}.
+      <a href="${escapeHtml(postedUrl)}">View comment on GitHub →</a></p>
   </div>
-  ${backLink()}
-  <p class="muted" style="margin-top:2rem">Draft URL: <code>${escapeHtml(baseUrl)}/drafts/${
-    escapeHtml(draft.id)
-  }</code></p>`;
+  ${backLink()}`;
 }

@@ -24,8 +24,6 @@ export interface Config {
   allowedLogin: string;
   /** TCP port to listen on (`PORT`). */
   port: number;
-  /** Optional Deno KV path (`DENO_KV_PATH`); undefined uses the default. */
-  kvPath: string | undefined;
   /** Optional GitHub webhook secret (`GITHUB_WEBHOOK_SECRET`) for /webhook. */
   webhookSecret: string | undefined;
   /** Optional Grist connection for comment relay; undefined disables it. */
@@ -124,7 +122,6 @@ export function loadConfig(env: Env): Config {
   }
 
   const allowedLogin = env.ALLOWED_LOGIN?.trim() || "dtinth";
-  const kvPath = env.DENO_KV_PATH?.trim() || undefined;
   const webhookSecret = env.GITHUB_WEBHOOK_SECRET?.trim() || undefined;
 
   // Grist is optional; if GRIST_API_URL is set, the rest of the group is required.
@@ -156,7 +153,6 @@ export function loadConfig(env: Env): Config {
     baseUrl,
     allowedLogin,
     port,
-    kvPath,
     webhookSecret,
     grist,
   };
