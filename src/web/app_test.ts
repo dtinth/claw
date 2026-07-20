@@ -315,6 +315,38 @@ Deno.test("POST /draft shows a readable error (not 502) on a generic post failur
   assertStringIncludes(await res.text(), "Validation failed");
 });
 
+Deno.test("POST /draft hints at app permissions and logs to stderr on 403", async () => {
+  const github = fakeGitHub({
+    postIssueComment: () => {
+      throw new GitHubApiError(403, "Resource not accessible by integration");
+    },
+  });
+  const form = new URLSearchParams({ repo: "dtinth/claw", kind: "issue", number: "1", body: "hi" });
+
+  const errors: string[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => errors.push(args.map(String).join(" "));
+  let html = "";
+  try {
+    const res = await makeApp(github).request("/draft", {
+      method: "POST",
+      headers: {
+        cookie: await sessionCookie(),
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: form.toString(),
+    });
+    assertEquals(res.status, 200);
+    html = await res.text();
+  } finally {
+    console.error = original;
+  }
+  assertStringIncludes(html, "Resource not accessible by integration");
+  assertStringIncludes(html, "Issues: Write"); // actionable hint
+  // the error was written to stderr for the deploy console
+  assertStringIncludes(errors.join("\n"), "failed to post comment to dtinth/claw");
+});
+
 // --- webhook + comment relay ------------------------------------------------
 
 const ISSUE_COMMENT_PAYLOAD = {
