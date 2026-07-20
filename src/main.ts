@@ -7,6 +7,7 @@
 import { loadConfig } from "./config.ts";
 import { openStore } from "./store.ts";
 import { createGitHubClient } from "./github/client.ts";
+import { createGristClient } from "./grist/client.ts";
 import { createApp } from "./web/app.ts";
 
 export async function main(): Promise<void> {
@@ -18,11 +19,13 @@ export async function main(): Promise<void> {
     clientId: config.clientId,
     clientSecret: config.clientSecret,
   });
-  const app = createApp({ config, store, github });
+  const grist = config.grist ? createGristClient(config.grist) : undefined;
+  const app = createApp({ config, store, github, ...(grist ? { grist } : {}) });
 
   Deno.serve({ port: config.port, hostname: "0.0.0.0" }, app.fetch);
   console.log(
-    `claw listening on :${config.port} (base URL ${config.baseUrl}, user @${config.allowedLogin})`,
+    `claw listening on :${config.port} (base URL ${config.baseUrl}, user @${config.allowedLogin}` +
+      `, comment relay ${grist ? "enabled" : "disabled"})`,
   );
 }
 

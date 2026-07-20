@@ -57,6 +57,30 @@ The agent hands you that URL. You open it, review the text, and click **Post as
 me** — issues and pull requests go through the REST API, discussions through
 GraphQL (`addDiscussionComment`, with optional `replyToId`).
 
+### 3. Comment relay via webhooks + Grist
+
+So an agent can *listen* for your GitHub comments without polling GitHub, claw
+ingests webhooks and mirrors comments into a Grist table; the agent then polls
+claw. Configure the GitHub App webhook to `POST ${BASE_URL}/webhook` with a
+secret matching `GITHUB_WEBHOOK_SECRET`.
+
+- **Ingest** — `POST /webhook`: the signature (`X-Hub-Signature-256`) is
+  verified, and `issue_comment` events (issues and pull requests) are upserted
+  into Grist keyed by the GitHub comment id.
+- **Poll** — `GET /api/comments` (same claw JWT): returns the relayed comments
+  for the JWT's repository, optionally filtered by issue and author.
+
+```sh
+curl -s "https://claw.example.com/api/comments?issue=42&authors=dtinth" \
+  -H "Authorization: Bearer <a claw JWT>"
+# => { "comments": [ { "commentId": …, "issue": 42, "author": "dtinth", "body": "…", "url": "…" } ] }
+```
+
+The `Comments` table columns claw writes: `Comment_ID` (the upsert key), `Repo`,
+`Issue`, `User_ID`, `User_Name`, `Body`. This feature is optional — without
+`GITHUB_WEBHOOK_SECRET` and the `GRIST_*` variables, `/webhook` and
+`/api/comments` return `503` and the rest of claw runs unaffected.
+
 ## Configuration
 
 All configuration comes from environment variables:
@@ -72,6 +96,10 @@ All configuration comes from environment variables:
 | `ALLOWED_LOGIN` | — | The single GitHub login allowed to use claw. Default `dtinth`. |
 | `PORT` | — | Port to listen on. Default `8000`. |
 | `DENO_KV_PATH` | — | Path to the Deno KV SQLite file. Default is Deno's location; the Docker image uses `/data/kv.sqlite`. |
+| `GITHUB_WEBHOOK_SECRET` | — | Webhook secret for `/webhook`. Enables the comment relay together with the `GRIST_*` vars. |
+| `GRIST_API_URL` | — | Grist base API URL including the document id, e.g. `https://grist.example.com/api/docs/<docId>`. |
+| `GRIST_API_KEY` | — | Grist API key (sent as a bearer token). Required when `GRIST_API_URL` is set. |
+| `GRIST_TABLE_ID` | — | Grist table name. Default `Comments`. |
 
 ### GitHub App setup
 

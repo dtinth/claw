@@ -26,6 +26,20 @@ export interface Config {
   port: number;
   /** Optional Deno KV path (`DENO_KV_PATH`); undefined uses the default. */
   kvPath: string | undefined;
+  /** Optional GitHub webhook secret (`GITHUB_WEBHOOK_SECRET`) for /webhook. */
+  webhookSecret: string | undefined;
+  /** Optional Grist connection for comment relay; undefined disables it. */
+  grist: GristConfig | undefined;
+}
+
+/** Grist connection details for the comment-relay feature. */
+export interface GristConfig {
+  /** Base API URL including the document id (`GRIST_API_URL`). */
+  apiUrl: string;
+  /** Grist API key, sent as a bearer token (`GRIST_API_KEY`). */
+  apiKey: string;
+  /** Table name (`GRIST_TABLE_ID`), defaults to `Comments`. */
+  table: string;
 }
 
 /** Thrown when configuration is missing or malformed. */
@@ -111,6 +125,23 @@ export function loadConfig(env: Env): Config {
 
   const allowedLogin = env.ALLOWED_LOGIN?.trim() || "dtinth";
   const kvPath = env.DENO_KV_PATH?.trim() || undefined;
+  const webhookSecret = env.GITHUB_WEBHOOK_SECRET?.trim() || undefined;
+
+  // Grist is optional; if GRIST_API_URL is set, the rest of the group is required.
+  let grist: GristConfig | undefined;
+  const rawGristUrl = env.GRIST_API_URL?.trim();
+  if (rawGristUrl) {
+    let apiUrl = "";
+    try {
+      apiUrl = new URL(rawGristUrl).toString().replace(/\/$/, "");
+    } catch {
+      problems.push(`GRIST_API_URL must be a valid URL (got "${rawGristUrl}")`);
+    }
+    const apiKey = env.GRIST_API_KEY?.trim();
+    if (!apiKey) problems.push("GRIST_API_KEY is required when GRIST_API_URL is set");
+    const table = env.GRIST_TABLE_ID?.trim() || "Comments";
+    if (apiUrl && apiKey) grist = { apiUrl, apiKey, table };
+  }
 
   if (problems.length > 0) {
     throw new ConfigError(`invalid configuration:\n- ${problems.join("\n- ")}`);
@@ -126,5 +157,7 @@ export function loadConfig(env: Env): Config {
     allowedLogin,
     port,
     kvPath,
+    webhookSecret,
+    grist,
   };
 }
