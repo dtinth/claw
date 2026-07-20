@@ -58,6 +58,13 @@ export function createApp(deps: AppDeps) {
 
   const app = new Hono<{ Variables: Variables }>();
 
+  // Safety net: log any uncaught handler error to stderr and return a plain
+  // 500 (never 502/504, which Cloudflare masks with its own page).
+  app.onError((err, c) => {
+    console.error(`claw: unhandled error on ${c.req.method} ${new URL(c.req.url).pathname}`, err);
+    return c.json({ error: "internal server error" }, 500);
+  });
+
   // --- helpers ------------------------------------------------------------
 
   async function currentSession(c: Context<{ Variables: Variables }>) {
@@ -139,6 +146,7 @@ export function createApp(deps: AppDeps) {
       token = await github.exchangeCode({ code, redirectUri, codeVerifier: verifier });
       user = await github.getAuthenticatedUser(token.accessToken);
     } catch (error) {
+      console.error("claw: OAuth callback failed", error);
       return c.html(
         layout(
           "claw — login failed",
@@ -380,6 +388,7 @@ export function createApp(deps: AppDeps) {
       }
       return c.html(layout("claw — posted", postedPage(postedUrl, repo, target)));
     } catch (error) {
+      console.error(`claw: failed to post comment to ${repo} (${target.kind})`, error);
       // A GitHub 401 almost always means the user-to-server token has expired
       // (GitHub Apps expire them ~8h by default). Clear the session and prompt
       // a fresh login rather than surfacing a raw error.
@@ -395,11 +404,16 @@ export function createApp(deps: AppDeps) {
           200,
         );
       }
+      let message = error instanceof Error ? error.message : String(error);
+      // "Resource not accessible by integration" = the GitHub App lacks the
+      // permission for this action even though the token is yours.
+      if (error instanceof GitHubApiError && error.status === 403) {
+        message +=
+          ' — the GitHub App is likely missing "Issues: Write" (or "Discussions: Write") permission. ' +
+          "Grant it in the app settings, re-authorize the new permission, then log in again.";
+      }
       return c.html(
-        layout(
-          "claw — post failed",
-          errorBlock(error instanceof Error ? error.message : String(error)) + backLink(),
-        ),
+        layout("claw — post failed", errorBlock(message) + backLink()),
         200,
       );
     }
