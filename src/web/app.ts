@@ -26,10 +26,12 @@ import {
   PERMISSION_CATALOG,
   type Permissions,
 } from "../permissions.ts";
+import { codeChallenge, generateCodeVerifier } from "../pkce.ts";
 import { escapeHtml, layout } from "./html.ts";
 
 const SESSION_COOKIE = "claw_session";
 const STATE_COOKIE = "claw_oauth_state";
+const VERIFIER_COOKIE = "claw_oauth_verifier";
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 /** Dependencies for the app. */
@@ -101,16 +103,14 @@ export function createApp(deps: AppDeps) {
 
   // --- auth ---------------------------------------------------------------
 
-  app.get("/auth/login", (c) => {
+  app.get("/auth/login", async (c) => {
     const state = randomToken();
-    setCookie(c, STATE_COOKIE, state, {
-      httpOnly: true,
-      secure,
-      sameSite: "Lax",
-      path: "/",
-      maxAge: 600,
-    });
-    return c.redirect(github.buildAuthorizeUrl({ state, redirectUri }));
+    const verifier = generateCodeVerifier();
+    const challenge = await codeChallenge(verifier);
+    const cookieOpts = { httpOnly: true, secure, sameSite: "Lax", path: "/", maxAge: 600 } as const;
+    setCookie(c, STATE_COOKIE, state, cookieOpts);
+    setCookie(c, VERIFIER_COOKIE, verifier, cookieOpts);
+    return c.redirect(github.buildAuthorizeUrl({ state, redirectUri, codeChallenge: challenge }));
   });
 
   app.get("/auth/callback", async (c) => {
@@ -118,9 +118,11 @@ export function createApp(deps: AppDeps) {
     const code = url.searchParams.get("code");
     const state = url.searchParams.get("state");
     const expectedState = getCookie(c, STATE_COOKIE);
+    const verifier = getCookie(c, VERIFIER_COOKIE);
     deleteCookie(c, STATE_COOKIE, { path: "/" });
+    deleteCookie(c, VERIFIER_COOKIE, { path: "/" });
 
-    if (!code || !state || !expectedState || state !== expectedState) {
+    if (!code || !state || !expectedState || state !== expectedState || !verifier) {
       return c.html(
         layout(
           "claw — login failed",
@@ -133,7 +135,7 @@ export function createApp(deps: AppDeps) {
     let user: { login: string };
     let token;
     try {
-      token = await github.exchangeCode({ code, redirectUri });
+      token = await github.exchangeCode({ code, redirectUri, codeVerifier: verifier });
       user = await github.getAuthenticatedUser(token.accessToken);
     } catch (error) {
       return c.html(
