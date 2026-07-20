@@ -16,6 +16,13 @@ export interface Config {
   clientId: string;
   /** The GitHub App's OAuth client secret (`GITHUB_CLIENT_SECRET`). */
   clientSecret: string;
+  /**
+   * OAuth scopes requested at login (`GITHUB_OAUTH_SCOPES`), space-separated.
+   * Defaults to `public_repo` so an OAuth App login can comment on any public
+   * repo. Ignored by GitHub App logins (they derive access from permissions);
+   * set to empty to omit the scope entirely.
+   */
+  oauthScopes: string;
   /** Secret used to sign intermediary claw JWTs (`CLAW_JWT_SECRET`). */
   jwtSecret: string;
   /** Public base URL, without trailing slash (`BASE_URL`). */
@@ -91,6 +98,10 @@ export function loadConfig(env: Env): Config {
   const clientSecret = required(env, "GITHUB_CLIENT_SECRET", problems);
   const jwtSecret = required(env, "CLAW_JWT_SECRET", problems);
   const rawBaseUrl = required(env, "BASE_URL", problems);
+  // Unset → default public_repo; set (even to "") → used verbatim.
+  const oauthScopes = env.GITHUB_OAUTH_SCOPES === undefined
+    ? "public_repo"
+    : env.GITHUB_OAUTH_SCOPES.trim();
 
   let privateKeyPem = "";
   if (rawKey) {
@@ -149,6 +160,7 @@ export function loadConfig(env: Env): Config {
     privateKeyPem,
     clientId,
     clientSecret,
+    oauthScopes,
     jwtSecret,
     baseUrl,
     allowedLogin,

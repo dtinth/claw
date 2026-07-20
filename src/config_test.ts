@@ -59,6 +59,12 @@ Deno.test("loadConfig requires GRIST_API_KEY when GRIST_API_URL is set", () => {
   );
 });
 
+Deno.test("loadConfig defaults oauthScopes to public_repo, overridable", () => {
+  assertEquals(loadConfig(fullEnv()).oauthScopes, "public_repo");
+  assertEquals(loadConfig(fullEnv({ GITHUB_OAUTH_SCOPES: "repo" })).oauthScopes, "repo");
+  assertEquals(loadConfig(fullEnv({ GITHUB_OAUTH_SCOPES: "" })).oauthScopes, "");
+});
+
 Deno.test("loadConfig honours ALLOWED_LOGIN and PORT overrides", () => {
   const config = loadConfig(fullEnv({ ALLOWED_LOGIN: "someone", PORT: "3000" }));
   assertEquals(config.allowedLogin, "someone");
