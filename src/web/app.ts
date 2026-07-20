@@ -15,6 +15,8 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { Config } from "../config.ts";
 import type { Session, Store } from "../store.ts";
 import type { GitHubClient } from "../github/client.ts";
+import type { CommentQuery, GristClient } from "../grist/client.ts";
+import { parseIssueCommentEvent, verifyWebhookSignature } from "../webhook.ts";
 import { type ClawGrant, ClawJwtError, createClawJwt, verifyClawJwt } from "../jwt.ts";
 import { parseRepo } from "../github/repo.ts";
 import {
@@ -35,6 +37,8 @@ export interface AppDeps {
   config: Config;
   store: Store;
   github: GitHubClient;
+  /** Optional Grist client enabling the webhook relay and comment polling. */
+  grist?: GristClient;
 }
 
 type Variables = { session: Session };
@@ -46,7 +50,7 @@ function randomToken(): string {
 }
 
 export function createApp(deps: AppDeps) {
-  const { config, store, github } = deps;
+  const { config, store, github, grist } = deps;
   const secure = config.baseUrl.startsWith("https://");
   const redirectUri = `${config.baseUrl}/auth/callback`;
 
@@ -279,6 +283,78 @@ export function createApp(deps: AppDeps) {
 
     const draft = await store.createDraft(parsed.value);
     return c.json({ id: draft.id, url: `${config.baseUrl}/drafts/${draft.id}` }, 201);
+  });
+
+  // --- incoming GitHub webhook: relay comments into Grist -----------------
+
+  app.post("/webhook", async (c) => {
+    if (!config.webhookSecret || !grist) {
+      return c.json({ error: "webhook relay is not configured" }, 503);
+    }
+    const raw = await c.req.text();
+    if (
+      !verifyWebhookSignature(
+        config.webhookSecret,
+        raw,
+        c.req.header("x-hub-signature-256") ?? null,
+      )
+    ) {
+      return c.json({ error: "invalid signature" }, 401);
+    }
+    let payload: unknown;
+    try {
+      payload = JSON.parse(raw);
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const record = parseIssueCommentEvent(c.req.header("x-github-event") ?? "", payload);
+    if (!record) return c.body(null, 204); // not a comment we relay
+
+    try {
+      await grist.upsertComment(record);
+    } catch (error) {
+      console.warn(
+        `claw webhook upsert failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return c.json({ error: "failed to store comment" }, 502);
+    }
+    return c.json({ ok: true, comment_id: record.Comment_ID }, 202);
+  });
+
+  // --- agent API: poll relayed comments for the JWT's repo ----------------
+
+  app.get("/api/comments", async (c) => {
+    const jwt = bearer(c.req.header("authorization"));
+    if (!jwt) return c.json({ error: "missing bearer token" }, 401);
+    let grant;
+    try {
+      grant = await verifyClawJwt(jwt, config.jwtSecret);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 401);
+    }
+    if (!grist) return c.json({ error: "comment relay is not configured" }, 503);
+
+    // Repo is fixed to the JWT's scope; issue and authors are optional filters.
+    const query: CommentQuery = { repo: grant.repo };
+    const issueParam = c.req.query("issue");
+    if (issueParam) {
+      const n = Number(issueParam);
+      if (!Number.isInteger(n) || n <= 0) {
+        return c.json({ error: "issue must be a positive integer" }, 400);
+      }
+      query.issue = n;
+    }
+    const authorsParam = c.req.query("authors");
+    if (authorsParam) {
+      const authors = authorsParam.split(",").map((a) => a.trim()).filter(Boolean);
+      if (authors.length > 0) query.authors = authors;
+    }
+
+    try {
+      return c.json({ comments: await grist.queryComments(query) });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 502);
+    }
   });
 
   // --- browser: review + post a draft -------------------------------------

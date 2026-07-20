@@ -1,9 +1,12 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
+import { createHmac } from "node:crypto";
 import { createApp } from "./app.ts";
 import { createClawJwt, verifyClawJwt } from "../jwt.ts";
 import { openStore, type Store } from "../store.ts";
 import type { Config } from "../config.ts";
 import type { GitHubClient } from "../github/client.ts";
+import type { Comment, CommentQuery, GristClient } from "../grist/client.ts";
+import type { CommentRecord } from "../webhook.ts";
 
 const config: Config = {
   appId: "123456",
@@ -15,6 +18,8 @@ const config: Config = {
   allowedLogin: "dtinth",
   port: 8000,
   kvPath: undefined,
+  webhookSecret: undefined,
+  grist: undefined,
 };
 
 /** A GitHub client fake; override individual methods per test. */
@@ -33,17 +38,44 @@ function fakeGitHub(overrides: Partial<GitHubClient> = {}): GitHubClient {
   };
 }
 
+interface AppExtras {
+  config?: Config;
+  grist?: GristClient;
+}
+
 async function withApp(
   github: GitHubClient,
   run: (app: ReturnType<typeof createApp>, store: Store) => Promise<void>,
+  extras: AppExtras = {},
 ) {
   const store = await openStore(":memory:");
   try {
-    const app = createApp({ config, store, github });
+    const app = createApp({
+      config: extras.config ?? config,
+      store,
+      github,
+      ...(extras.grist ? { grist: extras.grist } : {}),
+    });
     await run(app, store);
   } finally {
     store.close();
   }
+}
+
+/** A Grist client fake; override individual methods per test. */
+function fakeGrist(overrides: Partial<GristClient> = {}): GristClient {
+  return {
+    upsertComment: () => Promise.resolve(),
+    queryComments: () => Promise.resolve([]),
+    ...overrides,
+  };
+}
+
+const WEBHOOK_SECRET = "webhook-secret";
+const webhookConfig: Config = { ...config, webhookSecret: WEBHOOK_SECRET };
+
+function signBody(body: string): string {
+  return "sha256=" + createHmac("sha256", WEBHOOK_SECRET).update(body).digest("hex");
 }
 
 /** Create a logged-in session and return its cookie header. */
@@ -303,4 +335,145 @@ Deno.test("POST /jwt mints a claw JWT from the dashboard form", async () => {
     // A JWT begins with the base64url of {"alg":"HS256"...} => "eyJ"
     assertStringIncludes(html, "eyJ");
   });
+});
+
+// --- webhook + comment relay ------------------------------------------------
+
+const ISSUE_COMMENT_PAYLOAD = {
+  action: "created",
+  issue: { number: 844 },
+  comment: {
+    id: 5015219517,
+    body: "Is the bridge working?",
+    user: { login: "dtinth", id: 193136 },
+  },
+  repository: { full_name: "bemusic/bemuse" },
+};
+
+Deno.test("POST /webhook verifies the signature and upserts a comment", async () => {
+  let upserted: CommentRecord | null = null;
+  const grist = fakeGrist({
+    upsertComment: (rec) => {
+      upserted = rec;
+      return Promise.resolve();
+    },
+  });
+  await withApp(fakeGitHub(), async (app) => {
+    const body = JSON.stringify(ISSUE_COMMENT_PAYLOAD);
+    const res = await app.request("/webhook", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-github-event": "issue_comment",
+        "x-hub-signature-256": signBody(body),
+      },
+      body,
+    });
+    assertEquals(res.status, 202);
+    assertEquals(upserted, {
+      Comment_ID: 5015219517,
+      Repo: "bemusic/bemuse",
+      Issue: 844,
+      User_ID: 193136,
+      User_Name: "dtinth",
+      Body: "Is the bridge working?",
+    });
+  }, { config: webhookConfig, grist });
+});
+
+Deno.test("POST /webhook rejects a bad signature with 401", async () => {
+  const grist = fakeGrist({
+    upsertComment: () => {
+      throw new Error("should not upsert");
+    },
+  });
+  await withApp(fakeGitHub(), async (app) => {
+    const body = JSON.stringify(ISSUE_COMMENT_PAYLOAD);
+    const res = await app.request("/webhook", {
+      method: "POST",
+      headers: {
+        "x-github-event": "issue_comment",
+        "x-hub-signature-256": "sha256=deadbeef",
+      },
+      body,
+    });
+    assertEquals(res.status, 401);
+  }, { config: webhookConfig, grist });
+});
+
+Deno.test("POST /webhook ignores non-comment events with 204", async () => {
+  await withApp(fakeGitHub(), async (app) => {
+    const body = JSON.stringify({ zen: "hi" });
+    const res = await app.request("/webhook", {
+      method: "POST",
+      headers: {
+        "x-github-event": "ping",
+        "x-hub-signature-256": signBody(body),
+      },
+      body,
+    });
+    assertEquals(res.status, 204);
+  }, { config: webhookConfig, grist: fakeGrist() });
+});
+
+Deno.test("POST /webhook returns 503 when the relay is not configured", async () => {
+  await withApp(fakeGitHub(), async (app) => {
+    const res = await app.request("/webhook", { method: "POST", body: "{}" });
+    assertEquals(res.status, 503);
+  }); // default config: no webhookSecret, no grist
+});
+
+Deno.test("GET /api/comments returns comments filtered by JWT repo, issue and authors", async () => {
+  let receivedQuery: CommentQuery | null = null;
+  const sample: Comment = {
+    commentId: 1,
+    repo: "bemusic/bemuse",
+    issue: 844,
+    author: "dtinth",
+    authorId: 193136,
+    body: "hello",
+    url: "https://github.com/bemusic/bemuse/issues/844#issuecomment-1",
+  };
+  const grist = fakeGrist({
+    queryComments: (q) => {
+      receivedQuery = q;
+      return Promise.resolve([sample]);
+    },
+  });
+  await withApp(fakeGitHub(), async (app) => {
+    const jwt = await createClawJwt(
+      { repo: "bemusic/bemuse", permissions: { issues: "read" }, ttlSeconds: 3600 },
+      config.jwtSecret,
+    );
+    const res = await app.request("/api/comments?issue=844&authors=dtinth,alice", {
+      headers: { authorization: `Bearer ${jwt}` },
+    });
+    assertEquals(res.status, 200);
+    const body = await res.json();
+    assertEquals(body.comments, [sample]);
+    // repo comes from the JWT, not the query string
+    assertEquals(receivedQuery, {
+      repo: "bemusic/bemuse",
+      issue: 844,
+      authors: ["dtinth", "alice"],
+    });
+  }, { grist });
+});
+
+Deno.test("GET /api/comments rejects a missing token with 401", async () => {
+  await withApp(fakeGitHub(), async (app) => {
+    const res = await app.request("/api/comments");
+    assertEquals(res.status, 401);
+  }, { grist: fakeGrist() });
+});
+
+Deno.test("GET /api/comments returns 503 when the relay is not configured", async () => {
+  await withApp(fakeGitHub(), async (app) => {
+    const jwt = await createClawJwt(
+      { repo: "o/r", permissions: { issues: "read" }, ttlSeconds: 3600 },
+      config.jwtSecret,
+    );
+    const res = await app.request("/api/comments", { headers: { authorization: `Bearer ${jwt}` } });
+    assertEquals(res.status, 503);
+  }); // no grist configured
 });

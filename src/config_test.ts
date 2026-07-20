@@ -23,6 +23,40 @@ Deno.test("loadConfig reads a full environment and applies defaults", () => {
   assertEquals(config.allowedLogin, "dtinth"); // default
   assertEquals(config.port, 8000); // default
   assertStringIncludes(config.privateKeyPem, "BEGIN RSA PRIVATE KEY");
+  // webhook + Grist are optional and absent by default
+  assertEquals(config.webhookSecret, undefined);
+  assertEquals(config.grist, undefined);
+});
+
+Deno.test("loadConfig reads optional webhook secret and Grist config", () => {
+  const config = loadConfig(fullEnv({
+    GITHUB_WEBHOOK_SECRET: "whsec",
+    GRIST_API_URL: "https://grist.example.com/api/docs/abc123/",
+    GRIST_API_KEY: "gristkey",
+  }));
+  assertEquals(config.webhookSecret, "whsec");
+  assertEquals(config.grist, {
+    apiUrl: "https://grist.example.com/api/docs/abc123", // trailing slash trimmed
+    apiKey: "gristkey",
+    table: "Comments", // default
+  });
+});
+
+Deno.test("loadConfig honours GRIST_TABLE_ID override", () => {
+  const config = loadConfig(fullEnv({
+    GRIST_API_URL: "https://grist.example.com/api/docs/abc123",
+    GRIST_API_KEY: "gristkey",
+    GRIST_TABLE_ID: "Messages",
+  }));
+  assertEquals(config.grist?.table, "Messages");
+});
+
+Deno.test("loadConfig requires GRIST_API_KEY when GRIST_API_URL is set", () => {
+  assertThrows(
+    () => loadConfig(fullEnv({ GRIST_API_URL: "https://grist.example.com/api/docs/abc123" })),
+    ConfigError,
+    "GRIST_API_KEY",
+  );
 });
 
 Deno.test("loadConfig honours ALLOWED_LOGIN and PORT overrides", () => {
