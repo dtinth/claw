@@ -5,6 +5,7 @@ import { createClawJwt, verifyClawJwt } from "../jwt.ts";
 import { encodeSession } from "../session.ts";
 import type { Config } from "../config.ts";
 import type { GitHubClient } from "../github/client.ts";
+import { GitHubApiError } from "../github/client.ts";
 import type { Comment, CommentQuery, GristClient } from "../grist/client.ts";
 import type { CommentRecord } from "../webhook.ts";
 
@@ -95,6 +96,17 @@ Deno.test("GET / shows the dashboard when logged in", async () => {
   const html = await res.text();
   assertStringIncludes(html, "dtinth");
   assertStringIncludes(html, "Mint");
+});
+
+Deno.test("dashboard offers one-click permission presets", async () => {
+  const res = await makeApp(fakeGitHub()).request("/", {
+    headers: { cookie: await sessionCookie() },
+  });
+  const html = await res.text();
+  assertStringIncludes(html, 'data-claw-preset="agent"');
+  assertStringIncludes(html, "Read-only");
+  assertStringIncludes(html, "Coding agent");
+  assertStringIncludes(html, "var presets ="); // the applier script
 });
 
 Deno.test("a session for a different login is not accepted", async () => {
@@ -264,6 +276,43 @@ Deno.test("POST /draft posts an issue comment as the user", async () => {
     n: 5,
     body: "Thanks for the report!",
   });
+});
+
+Deno.test("POST /draft prompts re-login (not 502) when the GitHub token expired", async () => {
+  const github = fakeGitHub({
+    postIssueComment: () => {
+      throw new GitHubApiError(401, "Bad credentials");
+    },
+  });
+  const form = new URLSearchParams({ repo: "dtinth/claw", kind: "issue", number: "5", body: "hi" });
+  const res = await makeApp(github).request("/draft", {
+    method: "POST",
+    headers: { cookie: await sessionCookie(), "content-type": "application/x-www-form-urlencoded" },
+    body: form.toString(),
+  });
+  // Not 502/504 — those get masked by Cloudflare's own error page.
+  assertEquals(res.status, 200);
+  const html = await res.text();
+  assertStringIncludes(html, "session has expired");
+  assertStringIncludes(html, "/auth/login");
+  // the session cookie is cleared
+  assertStringIncludes(res.headers.get("set-cookie") ?? "", "claw_session=");
+});
+
+Deno.test("POST /draft shows a readable error (not 502) on a generic post failure", async () => {
+  const github = fakeGitHub({
+    postIssueComment: () => {
+      throw new GitHubApiError(422, "Validation failed");
+    },
+  });
+  const form = new URLSearchParams({ repo: "dtinth/claw", kind: "issue", number: "5", body: "hi" });
+  const res = await makeApp(github).request("/draft", {
+    method: "POST",
+    headers: { cookie: await sessionCookie(), "content-type": "application/x-www-form-urlencoded" },
+    body: form.toString(),
+  });
+  assertEquals(res.status, 200);
+  assertStringIncludes(await res.text(), "Validation failed");
 });
 
 // --- webhook + comment relay ------------------------------------------------

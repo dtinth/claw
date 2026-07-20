@@ -41,6 +41,8 @@ const STYLE = `
     background: #2563eb; color: white; font: inherit; font-weight: 600;
   }
   button.secondary { background: #6b7280; }
+  .preset-row { display: flex; gap: .4rem; flex-wrap: wrap; margin: 0 0 .6rem; }
+  button.preset { padding: .3rem .6rem; font-size: .85rem; font-weight: 500; background: #4b5563; }
   .row { display: flex; gap: .75rem; align-items: flex-end; }
   .row > * { flex: 1; }
   fieldset { border: 1px solid #8884; border-radius: 8px; margin: 1rem 0; }
