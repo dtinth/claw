@@ -540,7 +540,15 @@ const PERMISSION_PRESETS = [
   {
     id: "agent",
     label: "Coding agent",
-    perms: { contents: "write", issues: "write", pull_requests: "write" },
+    perms: {
+      contents: "write",
+      issues: "write",
+      pull_requests: "write",
+      workflows: "write",
+      checks: "read",
+      statuses: "read",
+      actions: "read",
+    },
   },
   { id: "issues-prs", label: "Issues & PRs", perms: { issues: "write", pull_requests: "write" } },
   { id: "clear", label: "Clear", perms: {} },
