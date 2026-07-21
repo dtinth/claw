@@ -94,6 +94,18 @@ never touches GitHub, so there's nothing in `PERMISSION_CATALOG` to grant).
 Optional — without the `UPLOAD_STORAGE_*` variables, `/api/upload` returns
 `503` and the rest of claw runs unaffected.
 
+### 5. Live, Grist-backed issue/PR comment view
+
+`GET /<owner>/<repo>/issues/<number>` (and `/pull/<number>`, same thing) —
+same path shape as GitHub's own issue/PR URLs, so a real GitHub link works
+here by just swapping the hostname. Logged-in only. It's a read of the
+comment relay (feature 3), not a live GitHub API call: each comment is
+rendered as sanitized GitHub-flavored markdown ([`@deno/gfm`](https://jsr.io/@deno/gfm),
+safe against embedded `<script>`/event-handler XSS by default) with a link
+back to the real comment on GitHub, and the page polls itself every ~10s
+(a small `?partial=1` fragment request) so new comments show up without a
+reload. It's read-only — reply via `/draft`, linked from the page.
+
 ## Configuration
 
 All configuration comes from environment variables:

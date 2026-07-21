@@ -625,3 +625,92 @@ Deno.test("POST /api/upload returns 400 on an invalid filename", async () => {
   });
   assertEquals(res.status, 400);
 });
+
+// --- GET /:owner/:repo/issues/:number (and /pull/:number) -------------------
+
+const SAMPLE_ISSUE_COMMENT: Comment = {
+  commentId: 1,
+  repo: "dtinth/claw",
+  issue: 24,
+  author: "dtinth",
+  authorId: 193136,
+  body: "hello **world**",
+  url: "https://github.com/dtinth/claw/issues/24#issuecomment-1",
+};
+
+Deno.test("GET /:owner/:repo/issues/:number redirects to login when logged out", async () => {
+  const res = await makeApp(fakeGitHub(), { grist: fakeGrist() }).request(
+    "/dtinth/claw/issues/24",
+    { redirect: "manual" },
+  );
+  assertEquals(res.status, 302);
+  assertEquals(res.headers.get("location"), "/auth/login");
+});
+
+Deno.test("GET /:owner/:repo/issues/:number renders the comment feed when logged in", async () => {
+  let receivedQuery: CommentQuery | null = null;
+  const grist = fakeGrist({
+    queryComments: (q) => {
+      receivedQuery = q;
+      return Promise.resolve([SAMPLE_ISSUE_COMMENT]);
+    },
+  });
+  const res = await makeApp(fakeGitHub(), { grist }).request("/dtinth/claw/issues/24", {
+    headers: { cookie: await sessionCookie() },
+  });
+  assertEquals(res.status, 200);
+  const html = await res.text();
+  assertStringIncludes(html, "<strong>world</strong>"); // GFM-rendered
+  assertStringIncludes(html, 'id="issuecomment-1"');
+  assertEquals(receivedQuery, { repo: "dtinth/claw", issue: 24 });
+});
+
+Deno.test("GET /:owner/:repo/pull/:number uses the same handler as /issues/:number", async () => {
+  const grist = fakeGrist({ queryComments: () => Promise.resolve([SAMPLE_ISSUE_COMMENT]) });
+  const res = await makeApp(fakeGitHub(), { grist }).request("/dtinth/claw/pull/24", {
+    headers: { cookie: await sessionCookie() },
+  });
+  assertEquals(res.status, 200);
+  assertStringIncludes(await res.text(), 'id="issuecomment-1"');
+});
+
+Deno.test("GET /:owner/:repo/issues/:number?partial=1 returns just the comment fragment", async () => {
+  const grist = fakeGrist({ queryComments: () => Promise.resolve([SAMPLE_ISSUE_COMMENT]) });
+  const res = await makeApp(fakeGitHub(), { grist }).request("/dtinth/claw/issues/24?partial=1", {
+    headers: { cookie: await sessionCookie() },
+  });
+  assertEquals(res.status, 200);
+  const html = await res.text();
+  assertStringIncludes(html, 'id="issuecomment-1"');
+  assertEquals(html.includes("<!doctype html>"), false); // fragment, not a full page
+});
+
+Deno.test("GET /:owner/:repo/issues/:number returns 503 when the relay is not configured", async () => {
+  const res = await makeApp(fakeGitHub()).request("/dtinth/claw/issues/24", {
+    headers: { cookie: await sessionCookie() },
+  });
+  assertEquals(res.status, 503);
+});
+
+Deno.test("GET /:owner/:repo/issues/:number?partial=1 returns 503 when the relay is not configured", async () => {
+  const res = await makeApp(fakeGitHub()).request("/dtinth/claw/issues/24?partial=1", {
+    headers: { cookie: await sessionCookie() },
+  });
+  assertEquals(res.status, 503);
+});
+
+Deno.test("GET /:owner/:repo/issues/:number rejects a non-numeric issue number with 400", async () => {
+  const res = await makeApp(fakeGitHub(), { grist: fakeGrist() }).request(
+    "/dtinth/claw/issues/not-a-number",
+    { headers: { cookie: await sessionCookie() } },
+  );
+  assertEquals(res.status, 400);
+});
+
+Deno.test("GET /:owner/:repo/issues/:number rejects an invalid owner/repo with 400", async () => {
+  const res = await makeApp(fakeGitHub(), { grist: fakeGrist() }).request(
+    "/weird!owner/claw/issues/24",
+    { headers: { cookie: await sessionCookie() } },
+  );
+  assertEquals(res.status, 400);
+});

@@ -16,7 +16,9 @@ import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import type { Config } from "../config.ts";
 import { decodeSession, encodeSession, type Session } from "../session.ts";
 import { GitHubApiError, type GitHubClient } from "../github/client.ts";
+import { formatRepo, parseRepo, RepoParseError } from "../github/repo.ts";
 import type { CommentQuery, GristClient } from "../grist/client.ts";
+import { issuePage, renderCommentsHtml } from "./comment_feed.ts";
 import { InvalidFilenameError, type UploadService } from "../storage/upload.ts";
 import { parseIssueCommentEvent, verifyWebhookSignature } from "../webhook.ts";
 import { type ClawGrant, ClawJwtError, createClawJwt, verifyClawJwt } from "../jwt.ts";
@@ -91,6 +93,8 @@ export function createApp(deps: AppDeps) {
   };
   app.use("/jwt", requireSession);
   app.use("/draft", requireSession);
+  app.use("/:owner/:repo/issues/:number", requireSession);
+  app.use("/:owner/:repo/pull/:number", requireSession);
 
   async function setSessionCookie(c: Context<{ Variables: Variables }>, session: Session) {
     const cookie = await encodeSession(session, config.jwtSecret, SESSION_TTL_SECONDS);
@@ -416,6 +420,46 @@ export function createApp(deps: AppDeps) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
     }
   });
+
+  // --- browser: live Grist-backed comment feed for one issue/PR ----------
+  //
+  // Same path shape as GitHub's own issue/PR URLs (so a real GitHub link can
+  // be reused by just swapping the hostname), and comment anchors match
+  // GitHub's `#issuecomment-<id>` scheme too. Grist-only — no GitHub API call.
+
+  async function issueFeedHandler(c: Context<{ Variables: Variables }>) {
+    let repo: string;
+    try {
+      repo = formatRepo(parseRepo(`${c.req.param("owner")}/${c.req.param("repo")}`));
+    } catch (error) {
+      const message = error instanceof RepoParseError ? error.message : "invalid repository";
+      return c.html(layout("claw — not found", errorBlock(message) + backLink()), 400);
+    }
+    const issue = Number(c.req.param("number"));
+    if (!Number.isInteger(issue) || issue <= 0) {
+      return c.html(
+        layout(
+          "claw — not found",
+          errorBlock("issue/PR number must be a positive integer") + backLink(),
+        ),
+        400,
+      );
+    }
+    const partial = c.req.query("partial") !== undefined;
+    if (!grist) {
+      const message = "comment relay is not configured";
+      return partial
+        ? c.text(message, 503)
+        : c.html(layout("claw — not configured", errorBlock(message) + backLink()), 503);
+    }
+
+    const comments = await grist.queryComments({ repo, issue });
+    const commentsHtml = renderCommentsHtml(comments);
+    if (partial) return c.html(commentsHtml);
+    return c.html(layout(`claw — ${repo}#${issue}`, issuePage({ repo, issue, commentsHtml })));
+  }
+  app.get("/:owner/:repo/issues/:number", issueFeedHandler);
+  app.get("/:owner/:repo/pull/:number", issueFeedHandler);
 
   // --- browser: prefilled comment draft (stateless, from query params) ----
 
