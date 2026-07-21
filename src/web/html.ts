@@ -57,6 +57,12 @@ const STYLE = `
   .grid { display: grid; grid-template-columns: 10rem 1fr; gap: .3rem .8rem; align-items: center; }
   .card { border: 1px solid #8884; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
   .ok { color: #16a34a; } .warn { color: #d97706; }
+  .copy-row { display: flex; gap: .5rem; align-items: center; }
+  .copy-row input[type=text] {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .copy-row button { flex: none; }
 `;
 
 /** Wrap page content in the standard document shell. */

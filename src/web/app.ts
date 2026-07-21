@@ -675,7 +675,11 @@ function mintedTokenPage(
     <p class="ok"><strong>JWT minted</strong> for <code>${escapeHtml(repo)}</code>
       (${escapeHtml(perms)}), valid ~${escapeHtml(days)} days.</p>
     <p>Hand this to your coding agent. It never expires early and cannot be recovered later — copy it now.</p>
-    <pre>${escapeHtml(jwt)}</pre>
+    <div class="copy-row">
+      <input id="jwt-value" type="text" readonly value="${escapeHtml(jwt)}"
+        onclick="this.select()" onfocus="this.select()">
+      <button type="button" id="jwt-copy">Copy</button>
+    </div>
   </div>
   <h3>How the agent uses it</h3>
   <pre>curl -s -X POST ${escapeHtml(baseUrl)}/api/token \\
@@ -683,7 +687,28 @@ function mintedTokenPage(
   <p>Returns a GitHub installation token scoped to <code>${
     escapeHtml(repo)
   }</code>, valid ~1 hour. Re-request as needed.</p>
-  ${backLink()}`;
+  ${backLink()}
+  <script>
+(function () {
+  var btn = document.getElementById("jwt-copy");
+  var input = document.getElementById("jwt-value");
+  if (!btn || !input) return;
+  btn.addEventListener("click", function () {
+    var reset = function () {
+      btn.textContent = "Copy";
+    };
+    navigator.clipboard.writeText(input.value).then(function () {
+      btn.textContent = "Copied!";
+      setTimeout(reset, 1500);
+    }, function () {
+      input.select();
+      document.execCommand("copy");
+      btn.textContent = "Copied!";
+      setTimeout(reset, 1500);
+    });
+  });
+})();
+  </script>`;
 }
 
 function draftFormPage(draft: DraftInput): string {

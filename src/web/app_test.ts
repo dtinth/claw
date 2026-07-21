@@ -225,7 +225,10 @@ Deno.test("POST /jwt mints a claw JWT from the dashboard form", async () => {
     body: form.toString(),
   });
   assertEquals(res.status, 200);
-  assertStringIncludes(await res.text(), "eyJ"); // a JWT
+  const html = await res.text();
+  assertStringIncludes(html, "eyJ"); // a JWT
+  assertStringIncludes(html, 'id="jwt-copy"'); // copy-to-clipboard button
+  assertStringIncludes(html, "readonly"); // truncated, not editable
 });
 
 Deno.test("POST /jwt redirects to login when logged out", async () => {
