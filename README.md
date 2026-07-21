@@ -248,17 +248,19 @@ log, or build artifact to a GitHub comment, which GitHub's API has no direct
 way to do:
 
 ```sh
-claw upload screenshot.png                    # hashed filename (default)
+claw upload screenshot.png                    # generic default: "image.png"
+claw upload notes.txt                         # generic default: "file.txt"
 claw upload screenshot.png --keep-filename     # keeps "screenshot.png"
 claw upload screenshot.png --filename foo.png  # explicit rename
 ```
 
-By default the uploaded filename is a sha256 hash of the file's contents
-(plus the original extension) rather than the local name — agent-generated
-files often have generic names (`screenshot.png`), and a content-derived name
-avoids collisions between unrelated uploads sharing one. `--keep-filename`
-and `--filename` are mutually exclusive. Like `monitor`, this authenticates
-with the claw JWT directly, no installation token minted.
+By default the uploaded filename is a generic `image.ext`/`file.ext` (image
+extensions get `image`, everything else gets `file`) rather than the local
+name — the object key already has the content's CID as a path segment
+(`ipfs/<cid>/<filename>`), so the filename itself doesn't need to be unique,
+just a sensible extension. `--keep-filename` and `--filename` are mutually
+exclusive. Like `monitor`, this authenticates with the claw JWT directly, no
+installation token minted.
 
 ## Deployment
 

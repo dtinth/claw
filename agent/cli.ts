@@ -331,26 +331,38 @@ function parseUploadArgs(args: string[]): UploadArgs {
   };
 }
 
+const IMAGE_EXTENSIONS = new Set([
+  ".png",
+  ".jpg",
+  ".jpeg",
+  ".gif",
+  ".webp",
+  ".svg",
+  ".bmp",
+  ".ico",
+  ".tiff",
+  ".avif",
+]);
+
 /**
  * The filename to upload as: `--filename` wins outright, `--keep-filename`
- * uses the local basename, and by default a sha256-of-the-bytes name is used
- * (agent-generated files often have generic/uninformative names like
- * `screenshot.png`, and a content-derived name avoids collisions between
- * unrelated uploads sharing one).
+ * uses the local basename, and by default a generic `file.ext`/`image.ext` is
+ * used — the object key already has the content's CID as a path segment
+ * (`ipfs/<cid>/<filename>`), so the filename itself doesn't need to be
+ * unique; it only needs a sensible extension for the browser/gateway to
+ * render it correctly.
  */
-export async function resolveUploadFilename(
+export function resolveUploadFilename(
   args: Pick<UploadArgs, "filename" | "keepFilename">,
-  data: Uint8Array,
   path: string,
-): Promise<string> {
+): string {
   if (args.filename) return args.filename;
   const base = basename(path);
   if (args.keepFilename) return base;
   const dot = base.lastIndexOf(".");
   const ext = dot === -1 ? "" : base.slice(dot);
-  const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(data));
-  const hex = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
-  return `${hex}${ext}`;
+  const stem = IMAGE_EXTENSIONS.has(ext.toLowerCase()) ? "image" : "file";
+  return `${stem}${ext}`;
 }
 
 async function cmdUpload(args: string[], rt: Runtime): Promise<number> {
@@ -370,7 +382,7 @@ async function cmdUpload(args: string[], rt: Runtime): Promise<number> {
 
   const context = await resolveContext(parsed.repo, rt);
   const jwt = findGrant(context.grants, context.repo);
-  const filename = await resolveUploadFilename(parsed, data, parsed.path);
+  const filename = resolveUploadFilename(parsed, parsed.path);
   const client = createUploadClient({ baseUrl: context.baseUrl, fetch: rt.fetch });
 
   try {

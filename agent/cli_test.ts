@@ -498,43 +498,31 @@ Deno.test("monitor: rejects a non-positive --interval", async () => {
 
 // --- resolveUploadFilename ---------------------------------------------------
 
-Deno.test("resolveUploadFilename: --filename wins outright", async () => {
-  const name = await resolveUploadFilename(
+Deno.test("resolveUploadFilename: --filename wins outright", () => {
+  const name = resolveUploadFilename(
     { filename: "renamed.png", keepFilename: true },
-    new TextEncoder().encode("data"),
     "/tmp/original.jpg",
   );
   assertEquals(name, "renamed.png");
 });
 
-Deno.test("resolveUploadFilename: --keep-filename uses the local basename", async () => {
-  const name = await resolveUploadFilename(
-    { keepFilename: true },
-    new TextEncoder().encode("data"),
-    "/tmp/original.jpg",
-  );
+Deno.test("resolveUploadFilename: --keep-filename uses the local basename", () => {
+  const name = resolveUploadFilename({ keepFilename: true }, "/tmp/original.jpg");
   assertEquals(name, "original.jpg");
 });
 
-Deno.test("resolveUploadFilename: defaults to a sha256 hash of the bytes, keeping the extension", async () => {
-  const name = await resolveUploadFilename(
-    {},
-    new TextEncoder().encode("hello world"),
-    "/tmp/screenshot.png",
-  );
-  assertMatch(name, /^[0-9a-f]{64}\.png$/);
+Deno.test("resolveUploadFilename: defaults to image.ext for an image extension", () => {
+  assertEquals(resolveUploadFilename({}, "/tmp/screenshot.png"), "image.png");
+  assertEquals(resolveUploadFilename({}, "/tmp/photo.JPEG"), "image.JPEG");
 });
 
-Deno.test("resolveUploadFilename: default hash omits the extension when the path has none", async () => {
-  const name = await resolveUploadFilename({}, new TextEncoder().encode("hello"), "/tmp/noext");
-  assertMatch(name, /^[0-9a-f]{64}$/);
+Deno.test("resolveUploadFilename: defaults to file.ext for a non-image extension", () => {
+  assertEquals(resolveUploadFilename({}, "/tmp/notes.txt"), "file.txt");
+  assertEquals(resolveUploadFilename({}, "/tmp/build.log"), "file.log");
 });
 
-Deno.test("resolveUploadFilename: default hash is deterministic for the same bytes", async () => {
-  const data = new TextEncoder().encode("same bytes");
-  const a = await resolveUploadFilename({}, data, "/tmp/a.txt");
-  const b = await resolveUploadFilename({}, data, "/tmp/b.txt");
-  assertEquals(a, b);
+Deno.test("resolveUploadFilename: defaults to plain file when the path has no extension", () => {
+  assertEquals(resolveUploadFilename({}, "/tmp/noext"), "file");
 });
 
 // --- claw upload -----------------------------------------------------------
