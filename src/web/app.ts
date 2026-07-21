@@ -31,7 +31,7 @@ import {
   type Permissions,
 } from "../permissions.ts";
 import { codeChallenge, generateCodeVerifier } from "../pkce.ts";
-import { escapeHtml, layout } from "./html.ts";
+import { escapeHtml, jsonForScript, layout } from "./html.ts";
 
 const SESSION_COOKIE = "claw_session";
 const STATE_COOKIE = "claw_oauth_state";
@@ -755,6 +755,17 @@ function mintedTokenPage(
   </script>`;
 }
 
+/**
+ * A stable key per draft target, for the client-side "remember what I was
+ * typing" localStorage persistence — same idea as GitHub's own comment-box
+ * draft recovery.
+ */
+function draftStorageKey(repo: string, target: DraftTarget): string {
+  const number = target.kind === "issue" ? target.issueNumber : target.discussionNumber;
+  const replyTo = target.kind === "discussion" ? target.replyToId ?? "" : "";
+  return `claw-draft:${repo}:${target.kind}:${number}:${replyTo}`;
+}
+
 function draftFormPage(draft: DraftInput): string {
   const { repo, target, body } = draft;
   const number = target.kind === "issue" ? target.issueNumber : target.discussionNumber;
@@ -773,14 +784,43 @@ function draftFormPage(draft: DraftInput): string {
     <textarea id="body" name="body" required>${escapeHtml(body)}</textarea>
     <p><button type="submit">Post as me</button></p>
   </form>
-  ${backLink()}`;
+  ${backLink()}
+  <script>
+(function () {
+  var key = ${jsonForScript(draftStorageKey(repo, target))};
+  var textarea = document.getElementById("body");
+  try {
+    if (!textarea.value) {
+      var saved = localStorage.getItem(key);
+      if (saved) textarea.value = saved;
+    }
+    textarea.addEventListener("input", function () {
+      try {
+        if (textarea.value) localStorage.setItem(key, textarea.value);
+        else localStorage.removeItem(key);
+      } catch (e) {}
+    });
+  } catch (e) {}
+})();
+  </script>`;
 }
 
 function postedPage(postedUrl: string, repo: string, target: DraftTarget): string {
+  const viewerLink = target.kind === "issue"
+    ? `<p><a href="/${
+      escapeHtml(repo)
+    }/issues/${target.issueNumber}">View in claw's comment feed →</a></p>`
+    : "";
   return `
   <div class="card">
     <p class="ok"><strong>Posted</strong> to ${escapeHtml(repo)} · ${targetLabel(target)}.
       <a href="${escapeHtml(postedUrl)}">View comment on GitHub →</a></p>
+    ${viewerLink}
   </div>
-  ${backLink()}`;
+  ${backLink()}
+  <script>
+(function () {
+  try { localStorage.removeItem(${jsonForScript(draftStorageKey(repo, target))}); } catch (e) {}
+})();
+  </script>`;
 }

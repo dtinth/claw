@@ -105,6 +105,28 @@ Deno.test("queryComments filters by repo and maps records", async () => {
   assertEquals(JSON.parse(filter), { Repo: ["bemusic/bemuse"] });
 });
 
+Deno.test("queryComments includes time when the Time column is set", async () => {
+  const { fn } = fakeFetch(() =>
+    json({
+      records: [{
+        id: 4,
+        fields: {
+          Comment_ID: 1,
+          Issue: 844,
+          Repo: "bemusic/bemuse",
+          Body: "hi",
+          User_ID: 193136,
+          User_Name: "dtinth",
+          Time: 1709294400,
+        },
+      }],
+    })
+  );
+  const client = createGristClient({ ...DEPS, fetch: fn });
+  const comments = await client.queryComments({ repo: "bemusic/bemuse" });
+  assertEquals(comments[0]!.time, 1709294400);
+});
+
 Deno.test("queryComments adds issue and author filters when provided", async () => {
   const { fn, calls } = fakeFetch(() => json({ records: [] }));
   const client = createGristClient({ ...DEPS, fetch: fn });

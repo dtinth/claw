@@ -20,6 +20,8 @@ export interface Comment {
   body: string;
   /** The GitHub URL of the comment. */
   url: string;
+  /** When the comment was created, as epoch seconds — absent for rows written before the `Time` column existed. */
+  time?: number;
 }
 
 /** Filter for {@link GristClient.queryComments}. */
@@ -66,6 +68,8 @@ interface GristRow {
     User_ID: number;
     User_Name: string;
     Body: string;
+    /** Absent for rows written before the `Time` column existed. */
+    Time?: number;
   };
 }
 
@@ -121,6 +125,7 @@ export function createGristClient(deps: GristClientDeps): GristClient {
         author: f.User_Name,
         authorId: f.User_ID,
         body: f.Body,
+        ...(typeof f.Time === "number" ? { time: f.Time } : {}),
         url: `https://github.com/${f.Repo}/issues/${f.Issue}#issuecomment-${f.Comment_ID}`,
       }));
     },

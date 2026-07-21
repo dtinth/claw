@@ -43,7 +43,11 @@ You open it (logged in), see an **editable, prefilled comment form**, tweak the
 text if you like, and click **Post as me**. Issues and pull requests go through
 the REST API; use `discussion=N` (with optional `replyTo=<node-id>`) instead of
 `issue=N` for a discussion comment via GraphQL. The comment is published under
-your own GitHub identity (the app's user-to-server token).
+your own GitHub identity (the app's user-to-server token). Whatever you type is
+mirrored to `localStorage` as you go (like GitHub's own comment box) and
+restored if you come back to the same link — cleared once the post actually
+succeeds, kept if it fails. Posting to an issue also links to claw's own
+comment feed (feature 5) for that issue, not just the GitHub URL.
 
 ### 3. Comment relay via webhooks + Grist
 
@@ -104,9 +108,13 @@ here by just swapping the hostname. Logged-in only. It's a read of the
 comment relay (feature 3), not a live GitHub API call: each comment is
 rendered as sanitized GitHub-flavored markdown ([`@deno/gfm`](https://jsr.io/@deno/gfm),
 safe against embedded `<script>`/event-handler XSS by default) with a link
-back to the real comment on GitHub, and the page polls itself every ~10s
-(a small `?partial=1` fragment request) so new comments show up without a
-reload. It's read-only — reply via `/draft`, linked from the page.
+back to the real comment on GitHub and, if the relayed row has a `Time`
+value, its timestamp (older rows written before that column existed just
+don't show one). The page polls itself every ~10s (a small `?partial=1`
+fragment request) so new comments show up without a reload, and a
+"Jump to latest ↓" link at the top scrolls to a marker just past the last
+comment. It's read-only — reply via `/draft`, linked from both the top and
+the bottom of the thread.
 
 ## Configuration
 

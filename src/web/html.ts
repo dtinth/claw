@@ -1,5 +1,15 @@
 /** Minimal server-rendered HTML helpers (no client-side framework). */
 
+/**
+ * Serialize a value for safe interpolation into an inline `<script>` block.
+ * Unlike `escapeHtml` (whose HTML-entity output isn't decoded inside
+ * `<script>` text and would corrupt the JS), this only neutralizes `<` so a
+ * value containing `</script>` can't prematurely close the element.
+ */
+export function jsonForScript(value: unknown): string {
+  return JSON.stringify(value).replace(/</g, "\\u003c");
+}
+
 /** Escape a string for safe interpolation into HTML text or attributes. */
 export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (char) => {

@@ -8,6 +8,18 @@ import { CSS as GFM_CSS, render as renderMarkdown } from "jsr:@deno/gfm@^0.12";
 import type { Comment } from "../grist/client.ts";
 import { escapeHtml } from "./html.ts";
 
+/** `2024-03-01 12:00 UTC` — fixed to UTC since this renders server-side, with no visitor timezone to use. */
+function formatTime(epochSeconds: number): string {
+  return new Date(epochSeconds * 1000).toISOString()
+    .replace("T", " ").replace(/:\d{2}\.\d{3}Z$/, " UTC");
+}
+
+function commentTimeHtml(c: Comment): string {
+  if (typeof c.time !== "number") return "";
+  const iso = new Date(c.time * 1000).toISOString();
+  return ` — <time datetime="${escapeHtml(iso)}">${escapeHtml(formatTime(c.time))}</time>`;
+}
+
 /** Render the comment list as an HTML fragment (used for both the full page and `?partial=1` polls). */
 export function renderCommentsHtml(comments: Comment[]): string {
   if (comments.length === 0) {
@@ -16,7 +28,9 @@ export function renderCommentsHtml(comments: Comment[]): string {
   return comments.map((c) => `
     <div class="comment-card" id="issuecomment-${c.commentId}">
       <p class="comment-meta"><strong>${escapeHtml(c.author)}</strong> —
-        <a href="${escapeHtml(c.url)}" target="_blank" rel="noopener">view on GitHub</a></p>
+        <a href="${escapeHtml(c.url)}" target="_blank" rel="noopener">view on GitHub</a>${
+    commentTimeHtml(c)
+  }</p>
       ${renderMarkdown(c.body)}
     </div>`).join("\n");
 }

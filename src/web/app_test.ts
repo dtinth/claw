@@ -265,6 +265,16 @@ Deno.test("GET /draft renders a prefilled, escaped form when logged in", async (
   assertStringIncludes(html, "Post as me");
 });
 
+Deno.test("GET /draft includes client-side draft-persistence script keyed to this thread", async () => {
+  const res = await makeApp(fakeGitHub()).request(
+    "/draft?repo=dtinth/claw&issue=5",
+    { headers: { cookie: await sessionCookie() } },
+  );
+  const html = await res.text();
+  assertStringIncludes(html, "localStorage");
+  assertStringIncludes(html, "claw-draft:dtinth/claw:issue:5:");
+});
+
 Deno.test("GET /draft returns 400 on invalid params", async () => {
   const res = await makeApp(fakeGitHub()).request("/draft?body=hi", {
     headers: { cookie: await sessionCookie() },
@@ -343,6 +353,42 @@ Deno.test("POST /draft posts an issue comment as the user", async () => {
     n: 5,
     body: "Thanks for the report!",
   });
+});
+
+Deno.test("POST /draft's success page links to claw's own comment feed for an issue", async () => {
+  const github = fakeGitHub({
+    postIssueComment: () =>
+      Promise.resolve({ htmlUrl: "https://github.com/dtinth/claw/issues/5#issuecomment-1" }),
+  });
+  const form = new URLSearchParams({ repo: "dtinth/claw", kind: "issue", number: "5", body: "hi" });
+  const res = await makeApp(github).request("/draft", {
+    method: "POST",
+    headers: { cookie: await sessionCookie(), "content-type": "application/x-www-form-urlencoded" },
+    body: form.toString(),
+  });
+  const html = await res.text();
+  assertStringIncludes(html, 'href="/dtinth/claw/issues/5"');
+  assertStringIncludes(html, "localStorage.removeItem"); // clears the persisted draft on success
+});
+
+Deno.test("POST /draft's success page has no comment-feed link for a discussion (not relayed)", async () => {
+  const github = fakeGitHub({
+    postDiscussionComment: () =>
+      Promise.resolve({ url: "https://github.com/dtinth/claw/discussions/5#discussioncomment-1" }),
+  });
+  const form = new URLSearchParams({
+    repo: "dtinth/claw",
+    kind: "discussion",
+    number: "5",
+    body: "hi",
+  });
+  const res = await makeApp(github).request("/draft", {
+    method: "POST",
+    headers: { cookie: await sessionCookie(), "content-type": "application/x-www-form-urlencoded" },
+    body: form.toString(),
+  });
+  const html = await res.text();
+  assertEquals(html.includes("comment feed"), false);
 });
 
 Deno.test("POST /draft prompts re-login (not 502) when the GitHub token expired", async () => {

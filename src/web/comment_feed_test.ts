@@ -26,6 +26,18 @@ Deno.test("renderCommentsHtml renders each comment's author, GitHub link and anc
   assertStringIncludes(html, 'id="issuecomment-111"');
 });
 
+Deno.test("renderCommentsHtml shows the time when the comment has one", () => {
+  const html = renderCommentsHtml([comment({ time: 1709294400 })]);
+  assertStringIncludes(html, "<time");
+  assertStringIncludes(html, 'datetime="2024-03-01T12:00:00.000Z"');
+  assertStringIncludes(html, "2024-03-01 12:00 UTC");
+});
+
+Deno.test("renderCommentsHtml omits the time element when the comment has none", () => {
+  const html = renderCommentsHtml([comment()]);
+  assertEquals(html.includes("<time"), false);
+});
+
 Deno.test("renderCommentsHtml renders markdown (GFM) in the comment body", () => {
   const html = renderCommentsHtml([
     comment({ body: "**bold** and a [link](https://example.com)" }),
