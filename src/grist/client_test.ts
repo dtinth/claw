@@ -53,6 +53,7 @@ Deno.test("upsertComment PUTs an add-or-update keyed by Comment_ID", async () =>
     User_ID: 193136,
     User_Name: "dtinth",
     Body: "Is the bridge working?",
+    Time: 1709294400,
   });
 
   const call = calls[0]!;
@@ -67,6 +68,7 @@ Deno.test("upsertComment PUTs an add-or-update keyed by Comment_ID", async () =>
     User_ID: 193136,
     User_Name: "dtinth",
     Body: "Is the bridge working?",
+    Time: 1709294400,
   });
 });
 
@@ -125,6 +127,7 @@ Deno.test("upsertComment throws GristApiError on a failure response", async () =
         User_ID: 1,
         User_Name: "a",
         Body: "b",
+        Time: 1709294400,
       }),
     GristApiError,
     "403",

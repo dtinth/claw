@@ -423,6 +423,7 @@ const ISSUE_COMMENT_PAYLOAD = {
     id: 5015219517,
     body: "Is the bridge working?",
     user: { login: "dtinth", id: 193136 },
+    created_at: "2024-03-01T12:00:00Z",
   },
   repository: { full_name: "bemusic/bemuse" },
 };
@@ -453,6 +454,7 @@ Deno.test("POST /webhook verifies the signature and upserts a comment", async ()
     User_ID: 193136,
     User_Name: "dtinth",
     Body: "Is the bridge working?",
+    Time: 1709294400,
   });
 });
 

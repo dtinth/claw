@@ -65,9 +65,11 @@ curl -s "https://claw.example.com/api/comments?issue=42&authors=dtinth" \
 ```
 
 The `Comments` table columns claw writes: `Comment_ID` (the upsert key), `Repo`,
-`Issue`, `User_ID`, `User_Name`, `Body`. This feature is optional — without
-`GITHUB_WEBHOOK_SECRET` and the `GRIST_*` variables, `/webhook` and
-`/api/comments` return `503` and the rest of claw runs unaffected.
+`Issue`, `User_ID`, `User_Name`, `Body`, `Time` (the comment's `created_at`, as
+an epoch-seconds integer — Grist's own expected format for a Date/DateTime
+column). This feature is optional — without `GITHUB_WEBHOOK_SECRET` and the
+`GRIST_*` variables, `/webhook` and `/api/comments` return `503` and the rest
+of claw runs unaffected.
 
 ### 4. File uploads to public, IPFS-addressed storage
 

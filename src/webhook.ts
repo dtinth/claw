@@ -17,6 +17,8 @@ export interface CommentRecord {
   User_ID: number;
   User_Name: string;
   Body: string;
+  /** When the comment was created, as an epoch-seconds integer (Grist's `Time` column expects this). */
+  Time: number;
 }
 
 /**
@@ -58,6 +60,8 @@ export function parseIssueCommentEvent(eventName: string, payload: unknown): Com
   const user = asRecord(comment?.user);
   if (!comment || !issue || !repository || !user) return null;
 
+  const createdAtMs = typeof comment.created_at === "string" ? Date.parse(comment.created_at) : NaN;
+
   const record: CommentRecord = {
     Comment_ID: comment.id as number,
     Repo: repository.full_name as string,
@@ -65,6 +69,7 @@ export function parseIssueCommentEvent(eventName: string, payload: unknown): Com
     User_ID: user.id as number,
     User_Name: user.login as string,
     Body: comment.body as string,
+    Time: Math.floor(createdAtMs / 1000),
   };
 
   if (
@@ -73,7 +78,8 @@ export function parseIssueCommentEvent(eventName: string, payload: unknown): Com
     typeof record.Issue !== "number" ||
     typeof record.User_ID !== "number" ||
     typeof record.User_Name !== "string" ||
-    typeof record.Body !== "string"
+    typeof record.Body !== "string" ||
+    !Number.isInteger(record.Time)
   ) {
     return null;
   }

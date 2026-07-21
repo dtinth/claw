@@ -59,6 +59,24 @@ Deno.test("issuePage embeds the given comments HTML and a Reply link to /draft",
   assertStringIncludes(html, "/draft?repo=dtinth%2Fclaw&amp;issue=24");
 });
 
+Deno.test("issuePage has a Reply link at both the top and the bottom", () => {
+  const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "" });
+  const replyCount =
+    html.split('<a href="/draft?repo=dtinth%2Fclaw&amp;issue=24">Reply</a>').length - 1;
+  assertEquals(replyCount, 2);
+});
+
+Deno.test("issuePage has a 'jump to latest' link pointing at a stable anchor after the comments", () => {
+  const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "<p>c</p>" });
+  assertStringIncludes(html, 'href="#comments-end"');
+  assertStringIncludes(html, 'id="comments-end"');
+  // The anchor target must sit outside #comments, since that container's
+  // innerHTML gets replaced wholesale on every poll.
+  const commentsEnd = html.indexOf('id="comments-end"');
+  const commentsDivEnd = html.indexOf("</div>", html.indexOf('id="comments"'));
+  assertEquals(commentsEnd > commentsDivEnd, true);
+});
+
 Deno.test("issuePage includes a polling script that refetches with ?partial=1", () => {
   const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "" });
   assertStringIncludes(html, "?partial=1");

@@ -39,6 +39,7 @@ Deno.test("parseIssueCommentEvent extracts a created comment", () => {
       id: 5015219517,
       body: "Is the bridge working?",
       user: { login: "dtinth", id: 193136 },
+      created_at: "2024-03-01T12:00:00Z",
     },
     repository: { full_name: "bemusic/bemuse" },
   };
@@ -49,6 +50,7 @@ Deno.test("parseIssueCommentEvent extracts a created comment", () => {
     User_ID: 193136,
     User_Name: "dtinth",
     Body: "Is the bridge working?",
+    Time: 1709294400,
   });
 });
 
@@ -56,7 +58,12 @@ Deno.test("parseIssueCommentEvent handles an edited comment", () => {
   const payload = {
     action: "edited",
     issue: { number: 1 },
-    comment: { id: 2, body: "updated", user: { login: "a", id: 3 } },
+    comment: {
+      id: 2,
+      body: "updated",
+      user: { login: "a", id: 3 },
+      created_at: "2024-01-01T00:00:00Z",
+    },
     repository: { full_name: "o/r" },
   };
   assertEquals(parseIssueCommentEvent("issue_comment", payload)?.Body, "updated");
@@ -71,7 +78,12 @@ Deno.test("parseIssueCommentEvent ignores deleted comments", () => {
   const payload = {
     action: "deleted",
     issue: { number: 1 },
-    comment: { id: 2, body: "gone", user: { login: "a", id: 3 } },
+    comment: {
+      id: 2,
+      body: "gone",
+      user: { login: "a", id: 3 },
+      created_at: "2024-01-01T00:00:00Z",
+    },
     repository: { full_name: "o/r" },
   };
   assertEquals(parseIssueCommentEvent("issue_comment", payload), null);
@@ -80,4 +92,21 @@ Deno.test("parseIssueCommentEvent ignores deleted comments", () => {
 Deno.test("parseIssueCommentEvent returns null on a malformed payload", () => {
   assertEquals(parseIssueCommentEvent("issue_comment", { action: "created" }), null);
   assertEquals(parseIssueCommentEvent("issue_comment", null), null);
+});
+
+Deno.test("parseIssueCommentEvent returns null when created_at is missing or unparseable", () => {
+  const base = {
+    action: "created",
+    issue: { number: 1 },
+    comment: { id: 2, body: "x", user: { login: "a", id: 3 } },
+    repository: { full_name: "o/r" },
+  };
+  assertEquals(parseIssueCommentEvent("issue_comment", base), null);
+  assertEquals(
+    parseIssueCommentEvent("issue_comment", {
+      ...base,
+      comment: { ...base.comment, created_at: "not a date" },
+    }),
+    null,
+  );
 });

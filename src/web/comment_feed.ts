@@ -36,11 +36,14 @@ export interface IssuePageParams {
 /** The full page body (wrapped in the shared `layout()` by the caller). */
 export function issuePage(params: IssuePageParams): string {
   const draftHref = `/draft?repo=${encodeURIComponent(params.repo)}&issue=${params.issue}`;
+  const replyLink = `<a href="${escapeHtml(draftHref)}">Reply</a>`;
   return `
   <style>${PAGE_STYLE}</style>
-  <p><a href="${escapeHtml(draftHref)}">Reply</a></p>
+  <p>${replyLink} · <a href="#comments-end">Jump to latest ↓</a></p>
   <div id="comments" data-color-mode="auto" data-light-theme="light" data-dark-theme="dark"
     class="markdown-body">${params.commentsHtml}</div>
+  <div id="comments-end"></div>
+  <p>${replyLink}</p>
   <script>
 (function () {
   var container = document.getElementById("comments");
