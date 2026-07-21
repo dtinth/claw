@@ -69,6 +69,31 @@ The `Comments` table columns claw writes: `Comment_ID` (the upsert key), `Repo`,
 `GITHUB_WEBHOOK_SECRET` and the `GRIST_*` variables, `/webhook` and
 `/api/comments` return `503` and the rest of claw runs unaffected.
 
+### 4. File uploads to public, IPFS-addressed storage
+
+GitHub's API has no way to attach a file to a comment the way the web UI's
+drag-and-drop does — so an agent that wants to post a screenshot or a log
+needs somewhere else to put it first. `POST /api/upload` (same claw JWT,
+multipart `file` field) stores the file in S3-compatible storage under
+`ipfs/<cid>/<filename>`, where `<cid>` is the file's IPFS content identifier
+(computed with [`@thai/carify`](https://jsr.io/@thai/carify), the same
+unixfs/CAR logic [`dtinth/upload-server`](https://github.com/dtinth/upload-server)
+uses). Same file + same filename always hashes to the same CID, so the
+returned URL also works from any IPFS gateway if the file is ever pinned
+there.
+
+```sh
+curl -s -X POST https://claw.example.com/api/upload \
+  -H "Authorization: Bearer <a claw JWT>" \
+  -F file=@screenshot.png
+# => { "url": "https://im.example.com/ipfs/bafy.../screenshot.png", "cid": "bafy..." }
+```
+
+Any repo's claw JWT can upload (this isn't a GitHub permission — the file
+never touches GitHub, so there's nothing in `PERMISSION_CATALOG` to grant).
+Optional — without the `UPLOAD_STORAGE_*` variables, `/api/upload` returns
+`503` and the rest of claw runs unaffected.
+
 ## Configuration
 
 All configuration comes from environment variables:
@@ -88,6 +113,12 @@ All configuration comes from environment variables:
 | `GRIST_API_URL` | — | Grist base API URL including the document id, e.g. `https://grist.example.com/api/docs/<docId>`. |
 | `GRIST_API_KEY` | — | Grist API key (sent as a bearer token). Required when `GRIST_API_URL` is set. |
 | `GRIST_TABLE_ID` | — | Grist table name. Default `Comments`. |
+| `UPLOAD_STORAGE_ENDPOINT` | — | S3-compatible endpoint URL, e.g. `https://s3.example.com`. Enables `/api/upload` together with the rest of the `UPLOAD_STORAGE_*` vars. |
+| `UPLOAD_STORAGE_BUCKET` | — | Bucket name. Required when `UPLOAD_STORAGE_ENDPOINT` is set. |
+| `UPLOAD_STORAGE_ACCESS_KEY_ID` | — | Access key id. Required when `UPLOAD_STORAGE_ENDPOINT` is set. |
+| `UPLOAD_STORAGE_SECRET_ACCESS_KEY` | — | Secret access key. Required when `UPLOAD_STORAGE_ENDPOINT` is set. |
+| `UPLOAD_STORAGE_REGION` | — | Region, e.g. `us-east-1`. Required when `UPLOAD_STORAGE_ENDPOINT` is set. |
+| `UPLOAD_STORAGE_PUBLIC_URL` | — | Public base URL uploaded files are readable at, e.g. `https://im.example.com`. Required when `UPLOAD_STORAGE_ENDPOINT` is set. |
 
 ### GitHub App setup
 
@@ -209,6 +240,26 @@ that same run only emit new arrivals — but nothing is written to disk, so a
 restart re-emits the current backlog rather than resuming from where it left
 off.
 
+### Uploading a file
+
+`claw upload <path>` uploads a local file to public, IPFS-addressed storage
+(feature 4 above) and prints the resulting URL — for attaching a screenshot,
+log, or build artifact to a GitHub comment, which GitHub's API has no direct
+way to do:
+
+```sh
+claw upload screenshot.png                    # hashed filename (default)
+claw upload screenshot.png --keep-filename     # keeps "screenshot.png"
+claw upload screenshot.png --filename foo.png  # explicit rename
+```
+
+By default the uploaded filename is a sha256 hash of the file's contents
+(plus the original extension) rather than the local name — agent-generated
+files often have generic names (`screenshot.png`), and a content-derived name
+avoids collisions between unrelated uploads sharing one. `--keep-filename`
+and `--filename` are mutually exclusive. Like `monitor`, this authenticates
+with the claw JWT directly, no installation token minted.
+
 ## Deployment
 
 The repository ships a [`Dockerfile`](Dockerfile). Any platform that builds and
@@ -242,6 +293,7 @@ deno task ci      # fmt --check + lint + check + test (what CI runs)
 | `src/draft.ts` | Parse prefilled comment-draft links. |
 | `src/pkce.ts` | PKCE verifier/challenge helpers. |
 | `src/github/` | Repo parsing, app JWT, and the GitHub API client. |
+| `src/storage/` | CID calculation, S3-compatible storage, and the `/api/upload` orchestration. |
 | `src/web/` | The Hono app, routes and server-rendered views. |
 | `src/main.ts` | Wire everything together and serve. |
-| `agent/` | The standalone agent CLI (`claw token`/`exec`/`setup`/`doctor`); its own `deno.json`, no import from `src/`. |
+| `agent/` | The standalone agent CLI (`claw token`/`exec`/`monitor`/`upload`/`setup`/`doctor`); its own `deno.json`, no import from `src/`. |

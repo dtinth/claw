@@ -35,6 +35,8 @@ export interface Config {
   webhookSecret: string | undefined;
   /** Optional Grist connection for comment relay; undefined disables it. */
   grist: GristConfig | undefined;
+  /** Optional storage connection for `/api/upload`; undefined disables it. */
+  uploadStorage: UploadStorageConfig | undefined;
 }
 
 /** Grist connection details for the comment-relay feature. */
@@ -45,6 +47,22 @@ export interface GristConfig {
   apiKey: string;
   /** Table name (`GRIST_TABLE_ID`), defaults to `Comments`. */
   table: string;
+}
+
+/** S3-compatible storage connection details for the file-upload feature. */
+export interface UploadStorageConfig {
+  /** Full endpoint URL (`UPLOAD_STORAGE_ENDPOINT`), e.g. `https://s3.example.com`. */
+  endpoint: string;
+  /** Bucket name (`UPLOAD_STORAGE_BUCKET`). */
+  bucket: string;
+  /** Access key id (`UPLOAD_STORAGE_ACCESS_KEY_ID`). */
+  accessKeyId: string;
+  /** Secret access key (`UPLOAD_STORAGE_SECRET_ACCESS_KEY`). */
+  secretAccessKey: string;
+  /** Region (`UPLOAD_STORAGE_REGION`). */
+  region: string;
+  /** Public base URL uploaded files are readable at (`UPLOAD_STORAGE_PUBLIC_URL`), no trailing slash. */
+  publicUrl: string;
 }
 
 /** Thrown when configuration is missing or malformed. */
@@ -151,6 +169,50 @@ export function loadConfig(env: Env): Config {
     if (apiUrl && apiKey) grist = { apiUrl, apiKey, table };
   }
 
+  // Upload storage is optional; if UPLOAD_STORAGE_ENDPOINT is set, the rest of the group is required.
+  let uploadStorage: UploadStorageConfig | undefined;
+  const rawEndpoint = env.UPLOAD_STORAGE_ENDPOINT?.trim();
+  if (rawEndpoint) {
+    let endpoint = "";
+    try {
+      endpoint = new URL(rawEndpoint).toString().replace(/\/$/, "");
+    } catch {
+      problems.push(`UPLOAD_STORAGE_ENDPOINT must be a valid URL (got "${rawEndpoint}")`);
+    }
+    const bucket = env.UPLOAD_STORAGE_BUCKET?.trim();
+    if (!bucket) {
+      problems.push("UPLOAD_STORAGE_BUCKET is required when UPLOAD_STORAGE_ENDPOINT is set");
+    }
+    const accessKeyId = env.UPLOAD_STORAGE_ACCESS_KEY_ID?.trim();
+    if (!accessKeyId) {
+      problems.push("UPLOAD_STORAGE_ACCESS_KEY_ID is required when UPLOAD_STORAGE_ENDPOINT is set");
+    }
+    const secretAccessKey = env.UPLOAD_STORAGE_SECRET_ACCESS_KEY?.trim();
+    if (!secretAccessKey) {
+      problems.push(
+        "UPLOAD_STORAGE_SECRET_ACCESS_KEY is required when UPLOAD_STORAGE_ENDPOINT is set",
+      );
+    }
+    const region = env.UPLOAD_STORAGE_REGION?.trim();
+    if (!region) {
+      problems.push("UPLOAD_STORAGE_REGION is required when UPLOAD_STORAGE_ENDPOINT is set");
+    }
+    const rawPublicUrl = env.UPLOAD_STORAGE_PUBLIC_URL?.trim();
+    let publicUrl = "";
+    if (!rawPublicUrl) {
+      problems.push("UPLOAD_STORAGE_PUBLIC_URL is required when UPLOAD_STORAGE_ENDPOINT is set");
+    } else {
+      try {
+        publicUrl = new URL(rawPublicUrl).toString().replace(/\/$/, "");
+      } catch {
+        problems.push(`UPLOAD_STORAGE_PUBLIC_URL must be a valid URL (got "${rawPublicUrl}")`);
+      }
+    }
+    if (endpoint && bucket && accessKeyId && secretAccessKey && region && publicUrl) {
+      uploadStorage = { endpoint, bucket, accessKeyId, secretAccessKey, region, publicUrl };
+    }
+  }
+
   if (problems.length > 0) {
     throw new ConfigError(`invalid configuration:\n- ${problems.join("\n- ")}`);
   }
@@ -167,5 +229,6 @@ export function loadConfig(env: Env): Config {
     port,
     webhookSecret,
     grist,
+    uploadStorage,
   };
 }

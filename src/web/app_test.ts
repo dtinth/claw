@@ -8,6 +8,7 @@ import type { GitHubClient } from "../github/client.ts";
 import { GitHubApiError } from "../github/client.ts";
 import type { Comment, CommentQuery, GristClient } from "../grist/client.ts";
 import type { CommentRecord } from "../webhook.ts";
+import { InvalidFilenameError, type UploadResult, type UploadService } from "../storage/upload.ts";
 
 const config: Config = {
   appId: "123456",
@@ -21,6 +22,7 @@ const config: Config = {
   port: 8000,
   webhookSecret: undefined,
   grist: undefined,
+  uploadStorage: undefined,
 };
 
 /** A GitHub client fake; override individual methods per test. */
@@ -43,6 +45,7 @@ function fakeGitHub(overrides: Partial<GitHubClient> = {}): GitHubClient {
 interface AppExtras {
   config?: Config;
   grist?: GristClient;
+  uploads?: UploadService;
 }
 
 function makeApp(github: GitHubClient, extras: AppExtras = {}) {
@@ -50,6 +53,7 @@ function makeApp(github: GitHubClient, extras: AppExtras = {}) {
     config: extras.config ?? config,
     github,
     ...(extras.grist ? { grist: extras.grist } : {}),
+    ...(extras.uploads ? { uploads: extras.uploads } : {}),
   });
 }
 
@@ -58,6 +62,20 @@ function fakeGrist(overrides: Partial<GristClient> = {}): GristClient {
   return {
     upsertComment: () => Promise.resolve(),
     queryComments: () => Promise.resolve([]),
+    ...overrides,
+  };
+}
+
+/** An upload service fake; override `upload` per test. */
+function fakeUploads(overrides: Partial<UploadService> = {}): UploadService {
+  const result: UploadResult = {
+    cid: "bafybeidhkumeonuwkebh2i4fc7o7lguehauradvlk57gzake6ggjsy372a",
+    key: "ipfs/bafybeidhkumeonuwkebh2i4fc7o7lguehauradvlk57gzake6ggjsy372a/hello.txt",
+    url:
+      "https://im.example.com/ipfs/bafybeidhkumeonuwkebh2i4fc7o7lguehauradvlk57gzake6ggjsy372a/hello.txt",
+  };
+  return {
+    upload: () => Promise.resolve(result),
     ...overrides,
   };
 }
@@ -511,4 +529,96 @@ Deno.test("GET /api/comments returns 503 when the relay is not configured", asyn
     headers: { authorization: `Bearer ${jwt}` },
   });
   assertEquals(res.status, 503);
+});
+
+// --- POST /api/upload -------------------------------------------------------
+
+async function uploadJwt(repo = "o/r") {
+  return await createClawJwt(
+    { repo, permissions: { issues: "read" }, ttlSeconds: 3600 },
+    config.jwtSecret,
+  );
+}
+
+function uploadForm(filename: string, contents: string): FormData {
+  const form = new FormData();
+  form.set("file", new Blob([contents]), filename);
+  return form;
+}
+
+Deno.test("POST /api/upload stores the file and returns the URL and CID", async () => {
+  let received: { filename: string; data: Uint8Array } | null = null;
+  const uploads = fakeUploads({
+    upload: (data, filename) => {
+      received = { filename, data };
+      return Promise.resolve({
+        cid: "bafy...",
+        key: "ipfs/bafy.../hello.txt",
+        url: "https://im.example.com/ipfs/bafy.../hello.txt",
+      });
+    },
+  });
+  const jwt = await uploadJwt();
+  const res = await makeApp(fakeGitHub(), { uploads }).request("/api/upload", {
+    method: "POST",
+    headers: { authorization: `Bearer ${jwt}` },
+    body: uploadForm("hello.txt", "hello world"),
+  });
+  assertEquals(res.status, 200);
+  const body = await res.json();
+  assertEquals(body, { url: "https://im.example.com/ipfs/bafy.../hello.txt", cid: "bafy..." });
+  assertEquals(received!.filename, "hello.txt");
+  assertEquals(new TextDecoder().decode(received!.data), "hello world");
+});
+
+Deno.test("POST /api/upload rejects a missing token with 401", async () => {
+  const res = await makeApp(fakeGitHub(), { uploads: fakeUploads() }).request("/api/upload", {
+    method: "POST",
+    body: uploadForm("hello.txt", "hello"),
+  });
+  assertEquals(res.status, 401);
+});
+
+Deno.test("POST /api/upload rejects an invalid token with 401", async () => {
+  const res = await makeApp(fakeGitHub(), { uploads: fakeUploads() }).request("/api/upload", {
+    method: "POST",
+    headers: { authorization: "Bearer not-a-jwt" },
+    body: uploadForm("hello.txt", "hello"),
+  });
+  assertEquals(res.status, 401);
+});
+
+Deno.test("POST /api/upload returns 503 when upload storage is not configured", async () => {
+  const jwt = await uploadJwt();
+  const res = await makeApp(fakeGitHub()).request("/api/upload", {
+    method: "POST",
+    headers: { authorization: `Bearer ${jwt}` },
+    body: uploadForm("hello.txt", "hello"),
+  });
+  assertEquals(res.status, 503);
+});
+
+Deno.test("POST /api/upload returns 400 when the file field is missing", async () => {
+  const jwt = await uploadJwt();
+  const res = await makeApp(fakeGitHub(), { uploads: fakeUploads() }).request("/api/upload", {
+    method: "POST",
+    headers: { authorization: `Bearer ${jwt}` },
+    body: new FormData(),
+  });
+  assertEquals(res.status, 400);
+});
+
+Deno.test("POST /api/upload returns 400 on an invalid filename", async () => {
+  const uploads = fakeUploads({
+    upload: () => {
+      throw new InvalidFilenameError("filename must not contain a path separator: a/b.txt");
+    },
+  });
+  const jwt = await uploadJwt();
+  const res = await makeApp(fakeGitHub(), { uploads }).request("/api/upload", {
+    method: "POST",
+    headers: { authorization: `Bearer ${jwt}` },
+    body: uploadForm("a/b.txt", "hello"),
+  });
+  assertEquals(res.status, 400);
 });

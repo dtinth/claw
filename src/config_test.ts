@@ -23,9 +23,10 @@ Deno.test("loadConfig reads a full environment and applies defaults", () => {
   assertEquals(config.allowedLogin, "dtinth"); // default
   assertEquals(config.port, 8000); // default
   assertStringIncludes(config.privateKeyPem, "BEGIN RSA PRIVATE KEY");
-  // webhook + Grist are optional and absent by default
+  // webhook + Grist + upload storage are optional and absent by default
   assertEquals(config.webhookSecret, undefined);
   assertEquals(config.grist, undefined);
+  assertEquals(config.uploadStorage, undefined);
 });
 
 Deno.test("loadConfig reads optional webhook secret and Grist config", () => {
@@ -94,6 +95,55 @@ Deno.test("loadConfig rejects a non-numeric PORT", () => {
     () => loadConfig(fullEnv({ PORT: "eighty" })),
     ConfigError,
     "PORT",
+  );
+});
+
+const UPLOAD_STORAGE_ENV = {
+  UPLOAD_STORAGE_ENDPOINT: "https://s3.example.com/",
+  UPLOAD_STORAGE_BUCKET: "claw-uploads",
+  UPLOAD_STORAGE_ACCESS_KEY_ID: "AKIA_DEV",
+  UPLOAD_STORAGE_SECRET_ACCESS_KEY: "secretkey",
+  UPLOAD_STORAGE_REGION: "us-east-1",
+  UPLOAD_STORAGE_PUBLIC_URL: "https://im.example.com/",
+};
+
+Deno.test("loadConfig reads optional upload storage config", () => {
+  const config = loadConfig(fullEnv(UPLOAD_STORAGE_ENV));
+  assertEquals(config.uploadStorage, {
+    endpoint: "https://s3.example.com", // trailing slash trimmed
+    bucket: "claw-uploads",
+    accessKeyId: "AKIA_DEV",
+    secretAccessKey: "secretkey",
+    region: "us-east-1",
+    publicUrl: "https://im.example.com", // trailing slash trimmed
+  });
+});
+
+Deno.test("loadConfig requires the rest of the upload storage group once the endpoint is set", () => {
+  const error = assertThrows(
+    () => loadConfig(fullEnv({ UPLOAD_STORAGE_ENDPOINT: "https://s3.example.com" })),
+    ConfigError,
+  ) as ConfigError;
+  assertStringIncludes(error.message, "UPLOAD_STORAGE_BUCKET");
+  assertStringIncludes(error.message, "UPLOAD_STORAGE_ACCESS_KEY_ID");
+  assertStringIncludes(error.message, "UPLOAD_STORAGE_SECRET_ACCESS_KEY");
+  assertStringIncludes(error.message, "UPLOAD_STORAGE_REGION");
+  assertStringIncludes(error.message, "UPLOAD_STORAGE_PUBLIC_URL");
+});
+
+Deno.test("loadConfig rejects a malformed UPLOAD_STORAGE_ENDPOINT", () => {
+  assertThrows(
+    () => loadConfig(fullEnv({ ...UPLOAD_STORAGE_ENV, UPLOAD_STORAGE_ENDPOINT: "not a url" })),
+    ConfigError,
+    "UPLOAD_STORAGE_ENDPOINT",
+  );
+});
+
+Deno.test("loadConfig rejects a malformed UPLOAD_STORAGE_PUBLIC_URL", () => {
+  assertThrows(
+    () => loadConfig(fullEnv({ ...UPLOAD_STORAGE_ENV, UPLOAD_STORAGE_PUBLIC_URL: "not a url" })),
+    ConfigError,
+    "UPLOAD_STORAGE_PUBLIC_URL",
   );
 });
 

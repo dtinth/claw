@@ -1,6 +1,6 @@
 import { assertEquals, assertMatch, assertStringIncludes } from "@std/assert";
 import { readCache, writeCache } from "./cache.ts";
-import { runCli } from "./cli.ts";
+import { resolveUploadFilename, runCli } from "./cli.ts";
 import type { Runtime } from "./cli.ts";
 
 interface CommandCall {
@@ -494,6 +494,173 @@ Deno.test("monitor: rejects a non-positive --interval", async () => {
   const code = await runCli(["monitor", "24", "--interval", "0"], rt);
   assertEquals(code, 1);
   assertStringIncludes(stderr.join(""), "--interval");
+});
+
+// --- resolveUploadFilename ---------------------------------------------------
+
+Deno.test("resolveUploadFilename: --filename wins outright", async () => {
+  const name = await resolveUploadFilename(
+    { filename: "renamed.png", keepFilename: true },
+    new TextEncoder().encode("data"),
+    "/tmp/original.jpg",
+  );
+  assertEquals(name, "renamed.png");
+});
+
+Deno.test("resolveUploadFilename: --keep-filename uses the local basename", async () => {
+  const name = await resolveUploadFilename(
+    { keepFilename: true },
+    new TextEncoder().encode("data"),
+    "/tmp/original.jpg",
+  );
+  assertEquals(name, "original.jpg");
+});
+
+Deno.test("resolveUploadFilename: defaults to a sha256 hash of the bytes, keeping the extension", async () => {
+  const name = await resolveUploadFilename(
+    {},
+    new TextEncoder().encode("hello world"),
+    "/tmp/screenshot.png",
+  );
+  assertMatch(name, /^[0-9a-f]{64}\.png$/);
+});
+
+Deno.test("resolveUploadFilename: default hash omits the extension when the path has none", async () => {
+  const name = await resolveUploadFilename({}, new TextEncoder().encode("hello"), "/tmp/noext");
+  assertMatch(name, /^[0-9a-f]{64}$/);
+});
+
+Deno.test("resolveUploadFilename: default hash is deterministic for the same bytes", async () => {
+  const data = new TextEncoder().encode("same bytes");
+  const a = await resolveUploadFilename({}, data, "/tmp/a.txt");
+  const b = await resolveUploadFilename({}, data, "/tmp/b.txt");
+  assertEquals(a, b);
+});
+
+// --- claw upload -----------------------------------------------------------
+//
+// Only the CLI dispatch layer is covered here (arg parsing, filename
+// resolution, wiring); the HTTP request shape is upload_client_test.ts's job.
+
+Deno.test("upload: requires a path", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["upload"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "usage");
+});
+
+Deno.test("upload: rejects --keep-filename combined with --filename", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["upload", "x.png", "--keep-filename", "--filename", "y.png"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "mutually exclusive");
+});
+
+Deno.test("upload: fails cleanly when the local file does not exist", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["upload", "/no/such/file.png"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "no such file");
+});
+
+Deno.test("upload: fails cleanly when no claw server is configured", async () => {
+  const dir = await Deno.makeTempDir();
+  const path = `${dir}/x.png`;
+  await Deno.writeTextFile(path, "pixels");
+  const { rt, stderr } = makeFakeRuntime({
+    env: { HOME: "/home/dtinth", CLAW_REPO: "dtinth/claw" },
+  });
+  const code = await runCli(["upload", path], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "CLAW_BASE_URL");
+});
+
+Deno.test("upload: fails cleanly when no repo can be resolved", async () => {
+  const dir = await Deno.makeTempDir();
+  const path = `${dir}/x.png`;
+  await Deno.writeTextFile(path, "pixels");
+  const { rt, stderr } = makeFakeRuntime({
+    env: { HOME: "/home/dtinth", CLAW_BASE_URL: "https://claw.example.com" },
+    commandOutputs: { "git remote get-url origin": { code: 1 } },
+  });
+  const code = await runCli(["upload", path], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "repository");
+});
+
+Deno.test("upload: fails cleanly when there is no grant for the repo", async () => {
+  const dir = await Deno.makeTempDir();
+  const path = `${dir}/x.png`;
+  await Deno.writeTextFile(path, "pixels");
+  const configDir = await Deno.makeTempDir();
+  await Deno.writeTextFile(`${configDir}/grants.json`, JSON.stringify({}));
+  const { rt, stderr } = makeFakeRuntime({
+    env: {
+      HOME: "/home/dtinth",
+      CLAW_BASE_URL: "https://claw.example.com",
+      CLAW_REPO: "dtinth/claw",
+      CLAW_CONFIG_DIR: configDir,
+      CLAW_CACHE_DIR: await Deno.makeTempDir(),
+    },
+  });
+  const code = await runCli(["upload", path], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "no grant for dtinth/claw");
+});
+
+async function seedUploadGrant(rt: Runtime) {
+  const configDir = await Deno.makeTempDir();
+  rt.env.CLAW_CONFIG_DIR = configDir;
+  rt.env.CLAW_CACHE_DIR = await Deno.makeTempDir();
+  await Deno.writeTextFile(
+    `${configDir}/grants.json`,
+    JSON.stringify({ "dtinth/claw": "the.jwt" }),
+  );
+}
+
+Deno.test("upload: prints the returned URL on success", async () => {
+  const dir = await Deno.makeTempDir();
+  const path = `${dir}/screenshot.png`;
+  await Deno.writeTextFile(path, "pixels");
+  const { rt, stdout } = makeFakeRuntime({
+    env: {
+      HOME: "/home/dtinth",
+      CLAW_BASE_URL: "https://claw.example.com",
+      CLAW_REPO: "dtinth/claw",
+    },
+    fetchHandler: () =>
+      jsonResponse({ url: "https://im.example.com/ipfs/bafy/deadbeef.png", cid: "bafy" }),
+  });
+  await seedUploadGrant(rt);
+
+  const code = await runCli(["upload", path], rt);
+
+  assertEquals(code, 0);
+  assertEquals(stdout, ["https://im.example.com/ipfs/bafy/deadbeef.png\n"]);
+});
+
+Deno.test("upload: reports the server error and exits 1 on failure", async () => {
+  const dir = await Deno.makeTempDir();
+  const path = `${dir}/screenshot.png`;
+  await Deno.writeTextFile(path, "pixels");
+  const { rt, stderr } = makeFakeRuntime({
+    env: {
+      HOME: "/home/dtinth",
+      CLAW_BASE_URL: "https://claw.example.com",
+      CLAW_REPO: "dtinth/claw",
+    },
+    fetchHandler: () =>
+      new Response(JSON.stringify({ error: "upload storage is not configured" }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+  await seedUploadGrant(rt);
+
+  const code = await runCli(["upload", path], rt);
+
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "upload storage is not configured");
 });
 
 // --- claw setup ----------------------------------------------------------

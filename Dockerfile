@@ -18,4 +18,4 @@ USER deno
 # claw defaults to 8000 otherwise.
 EXPOSE 8000
 
-CMD ["run", "--allow-net", "--allow-env", "src/main.ts"]
+CMD ["run", "--allow-net", "--allow-env", "--allow-sys", "--allow-read", "src/main.ts"]

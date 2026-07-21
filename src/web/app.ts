@@ -17,6 +17,7 @@ import type { Config } from "../config.ts";
 import { decodeSession, encodeSession, type Session } from "../session.ts";
 import { GitHubApiError, type GitHubClient } from "../github/client.ts";
 import type { CommentQuery, GristClient } from "../grist/client.ts";
+import { InvalidFilenameError, type UploadService } from "../storage/upload.ts";
 import { parseIssueCommentEvent, verifyWebhookSignature } from "../webhook.ts";
 import { type ClawGrant, ClawJwtError, createClawJwt, verifyClawJwt } from "../jwt.ts";
 import { type DraftInput, type DraftTarget, parseDraftParams } from "../draft.ts";
@@ -41,6 +42,8 @@ export interface AppDeps {
   github: GitHubClient;
   /** Optional Grist client enabling the webhook relay and comment polling. */
   grist?: GristClient;
+  /** Optional upload service enabling `/api/upload`. */
+  uploads?: UploadService;
 }
 
 type Variables = { session: Session };
@@ -52,7 +55,7 @@ function randomToken(): string {
 }
 
 export function createApp(deps: AppDeps) {
-  const { config, github, grist } = deps;
+  const { config, github, grist, uploads } = deps;
   const secure = config.baseUrl.startsWith("https://");
   const redirectUri = `${config.baseUrl}/auth/callback`;
 
@@ -380,6 +383,36 @@ export function createApp(deps: AppDeps) {
     try {
       return c.json({ comments: await grist.queryComments(query) });
     } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
+    }
+  });
+
+  // --- agent API: upload a file to public, IPFS-addressed storage ---------
+
+  app.post("/api/upload", async (c) => {
+    const jwt = bearer(c.req.header("authorization"));
+    if (!jwt) return c.json({ error: "missing bearer token" }, 401);
+    try {
+      await verifyClawJwt(jwt, config.jwtSecret);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 401);
+    }
+    if (!uploads) return c.json({ error: "upload storage is not configured" }, 503);
+
+    const form = await c.req.parseBody();
+    const file = form.file;
+    if (!(file instanceof File)) {
+      return c.json({ error: 'multipart field "file" is required' }, 400);
+    }
+
+    try {
+      const data = new Uint8Array(await file.arrayBuffer());
+      const result = await uploads.upload(data, file.name);
+      return c.json({ url: result.url, cid: result.cid });
+    } catch (error) {
+      if (error instanceof InvalidFilenameError) {
+        return c.json({ error: error.message }, 400);
+      }
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
     }
   });

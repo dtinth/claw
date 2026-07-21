@@ -2,20 +2,25 @@
  * Command dispatch. Every external effect — the clock, network, subprocess
  * spawning, stdio — goes through {@link Runtime} so the whole CLI is testable
  * without touching the real filesystem's git config or spawning real
- * processes. Filesystem reads/writes (grants, cache) are the exception: they
- * go through the real Deno fs directly, exercised in tests via temp dirs.
+ * processes. Filesystem reads/writes (grants, cache, the local file `upload`
+ * sends) are the exception: they go through the real Deno fs directly,
+ * exercised in tests via temp dirs.
  */
 import { clearCache } from "./cache.ts";
 import { loadConfigOrEmpty, setBaseUrl } from "./config_store.ts";
 import { findGrant, loadGrants, upsertGrant } from "./grants.ts";
 import { decodeClawJwtPayload } from "./jwt_decode.ts";
+import { basename, readLocalFile } from "./local_file.ts";
 import { runMonitorLoop } from "./monitor.ts";
 import { type Paths, resolvePaths } from "./paths.ts";
 import { resolveRepo } from "./resolve_repo.ts";
 import { getToken } from "./token.ts";
+import { createUploadClient } from "./upload_client.ts";
 
 const MONITOR_USAGE =
   "usage: claw monitor <issue> [--repo owner/repo] [--authors a,b] [--interval 10]";
+const UPLOAD_USAGE =
+  "usage: claw upload <path> [--repo owner/repo] [--keep-filename | --filename name]";
 
 const HELP_TEXT = `claw — mint repo-scoped GitHub tokens from a claw JWT
 
@@ -26,6 +31,8 @@ Usage:
   claw exec [--repo owner/repo] -- CMD  Run CMD with GH_TOKEN and CLAW_REPO set
   claw monitor <issue> [--repo owner/repo] [--authors a,b] [--interval 10]
                                          Poll for new comments on one issue/PR, one JSON per line
+  claw upload <path> [--repo owner/repo] [--keep-filename | --filename name]
+                                         Upload a file, print its public URL
   claw setup                            Point git's github.com credential helper at gh
   claw doctor                           Check config, grants, and git wiring
 
@@ -279,6 +286,103 @@ async function cmdMonitor(args: string[], rt: Runtime): Promise<number> {
   }
 }
 
+interface UploadArgs {
+  path?: string;
+  repo?: string;
+  keepFilename?: boolean;
+  filename?: string;
+  error?: string;
+}
+
+function parseUploadArgs(args: string[]): UploadArgs {
+  let repo: string | undefined;
+  let keepFilename = false;
+  let filename: string | undefined;
+  const positional: string[] = [];
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--repo") {
+      repo = args[++i];
+    } else if (arg.startsWith("--repo=")) {
+      repo = arg.slice("--repo=".length);
+    } else if (arg === "--keep-filename") {
+      keepFilename = true;
+    } else if (arg === "--filename") {
+      filename = args[++i];
+    } else if (arg.startsWith("--filename=")) {
+      filename = arg.slice("--filename=".length);
+    } else {
+      positional.push(arg);
+    }
+  }
+
+  const path = positional[0];
+  if (!path) return { error: UPLOAD_USAGE };
+  if (keepFilename && filename !== undefined) {
+    return { error: "claw: --keep-filename and --filename are mutually exclusive" };
+  }
+
+  return {
+    path,
+    ...(repo !== undefined ? { repo } : {}),
+    ...(keepFilename ? { keepFilename } : {}),
+    ...(filename !== undefined ? { filename } : {}),
+  };
+}
+
+/**
+ * The filename to upload as: `--filename` wins outright, `--keep-filename`
+ * uses the local basename, and by default a sha256-of-the-bytes name is used
+ * (agent-generated files often have generic/uninformative names like
+ * `screenshot.png`, and a content-derived name avoids collisions between
+ * unrelated uploads sharing one).
+ */
+export async function resolveUploadFilename(
+  args: Pick<UploadArgs, "filename" | "keepFilename">,
+  data: Uint8Array,
+  path: string,
+): Promise<string> {
+  if (args.filename) return args.filename;
+  const base = basename(path);
+  if (args.keepFilename) return base;
+  const dot = base.lastIndexOf(".");
+  const ext = dot === -1 ? "" : base.slice(dot);
+  const digest = await crypto.subtle.digest("SHA-256", new Uint8Array(data));
+  const hex = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex}${ext}`;
+}
+
+async function cmdUpload(args: string[], rt: Runtime): Promise<number> {
+  const parsed = parseUploadArgs(args);
+  if (parsed.error || !parsed.path) {
+    rt.stderr((parsed.error ?? UPLOAD_USAGE) + "\n");
+    return 1;
+  }
+
+  let data: Uint8Array;
+  try {
+    data = await readLocalFile(parsed.path);
+  } catch (error) {
+    rt.stderr(`claw: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+
+  const context = await resolveContext(parsed.repo, rt);
+  const jwt = findGrant(context.grants, context.repo);
+  const filename = await resolveUploadFilename(parsed, data, parsed.path);
+  const client = createUploadClient({ baseUrl: context.baseUrl, fetch: rt.fetch });
+
+  try {
+    const result = await client.upload({ jwt, data, filename });
+    rt.stdout(result.url + "\n");
+    return 0;
+  } catch (error) {
+    rt.stderr(`claw: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
 async function cmdToken(args: string[], rt: Runtime): Promise<number> {
   const { repo: repoFlag } = extractRepoFlag(args);
   const context = await resolveContext(repoFlag, rt);
@@ -423,6 +527,8 @@ export async function runCli(argv: string[], rt: Runtime): Promise<number> {
         return await cmdSet(rest, rt);
       case "monitor":
         return await cmdMonitor(rest, rt);
+      case "upload":
+        return await cmdUpload(rest, rt);
       case "token":
         return await cmdToken(rest, rt);
       case "exec":
