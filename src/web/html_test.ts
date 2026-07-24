@@ -24,6 +24,25 @@ Deno.test("layout renders a plain single column without a sidebar", () => {
 Deno.test("layout wraps body and sidebar in the app shell when a sidebar is given", () => {
   const html = layout("t", "<p>BODY</p>", "<p>SIDEBAR</p>");
   assertStringIncludes(html, 'class="app-shell"');
-  assertStringIncludes(html, '<aside class="app-sidebar"><p>SIDEBAR</p></aside>');
+  assertStringIncludes(html, 'id="app-sidebar"');
+  assertStringIncludes(html, "<p>SIDEBAR</p>");
   assertStringIncludes(html, "<p>BODY</p>");
+  // The sidebar content must be inside the <aside>, not just anywhere on the page.
+  const asideStart = html.indexOf('id="app-sidebar"');
+  const asideEnd = html.indexOf("</aside>");
+  const sidebarContentPos = html.indexOf("<p>SIDEBAR</p>");
+  assertEquals(sidebarContentPos > asideStart && sidebarContentPos < asideEnd, true);
+});
+
+Deno.test("layout includes a collapse toggle that remembers state in localStorage", () => {
+  const html = layout("t", "<p>BODY</p>", "<p>SIDEBAR</p>");
+  assertStringIncludes(html, 'id="sidebar-toggle"');
+  assertStringIncludes(html, "claw-sidebar-collapsed");
+  assertStringIncludes(html, 'classList.toggle("collapsed"');
+});
+
+Deno.test("layout has no collapse toggle when there's no sidebar", () => {
+  const html = layout("t", "<p>BODY</p>");
+  // STYLE always defines a .sidebar-toggle CSS rule, so check for the markup, not a bare substring.
+  assertEquals(html.includes('id="sidebar-toggle"'), false);
 });

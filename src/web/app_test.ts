@@ -327,6 +327,38 @@ Deno.test("GET /draft renders a prefilled, escaped form when logged in", async (
   assertStringIncludes(html, "Post as me");
 });
 
+Deno.test("GET /draft says 'Prefilled comment' and offers an edit hint when a body is given", async () => {
+  const res = await makeApp(fakeGitHub()).request(
+    "/draft?repo=dtinth/claw&issue=5&body=" + encodeURIComponent("hello"),
+    { headers: { cookie: await sessionCookie() } },
+  );
+  const html = await res.text();
+  assertStringIncludes(html, "Prefilled comment");
+  assertStringIncludes(html, "Edit if you like");
+});
+
+Deno.test("GET /draft says 'New comment' (no prefill framing) when there's no body param", async () => {
+  const res = await makeApp(fakeGitHub()).request(
+    "/draft?repo=dtinth/claw&issue=5",
+    { headers: { cookie: await sessionCookie() } },
+  );
+  const html = await res.text();
+  assertEquals(html.includes("Prefilled comment"), false);
+  assertEquals(html.includes("Edit if you like"), false);
+  assertStringIncludes(html, "New comment");
+});
+
+Deno.test("GET /draft lets Cmd/Ctrl+Enter submit the form", async () => {
+  const res = await makeApp(fakeGitHub()).request(
+    "/draft?repo=dtinth/claw&issue=5",
+    { headers: { cookie: await sessionCookie() } },
+  );
+  const html = await res.text();
+  assertStringIncludes(html, "metaKey");
+  assertStringIncludes(html, "ctrlKey");
+  assertStringIncludes(html, "requestSubmit");
+});
+
 Deno.test("GET /draft shows the sidebar too — it's app-shell chrome, not dashboard-only", async () => {
   const res = await makeApp(fakeGitHub(), { grist: fakeGrist() }).request(
     "/draft?repo=dtinth/claw&issue=5",

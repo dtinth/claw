@@ -40,6 +40,12 @@ const STYLE = `
     flex: 0 0 16rem; box-sizing: border-box; border-right: 1px solid #8884;
     padding: 1rem; position: sticky; top: 0; height: 100vh; overflow-y: auto;
   }
+  .app-sidebar.collapsed { flex: 0 0 auto; width: auto; height: auto; overflow: visible; }
+  .app-sidebar.collapsed > *:not(.sidebar-toggle) { display: none; }
+  .sidebar-toggle {
+    background: none; border: 1px solid #8884; border-radius: 4px; cursor: pointer;
+    color: inherit; font-size: .8rem; line-height: 1; padding: .3rem .5rem; margin-bottom: .6rem;
+  }
   .app-main { flex: 1; min-width: 0; }
   .page { max-width: 780px; margin: 0 auto; padding: 1.5rem; }
   @media (max-width: 700px) {
@@ -100,9 +106,11 @@ const STYLE = `
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
   .sidebar-list .excerpt.prominent { color: inherit; font-weight: 600; }
-  .sidebar-list button.mark-unread {
-    display: block; margin-top: .3rem; padding: .15rem .5rem; font-size: .7rem; font-weight: 500;
+  .mark-unread-icon {
+    display: inline-block; background: none; border: none; cursor: pointer; color: gray;
+    font-size: .8rem; line-height: 1; padding: 0 .2rem; vertical-align: middle;
   }
+  .mark-unread-icon:hover { color: inherit; }
   .earlier-comments summary { cursor: pointer; color: gray; margin-bottom: .5rem; }
 `;
 
@@ -111,7 +119,9 @@ const STYLE = `
  * (HTML for the dashboard's "recent bot activity" panel), it's rendered as a
  * sticky left rail that's part of the shell itself — present on every
  * logged-in page, not just one — via a single `.app-shell` flex row; without
- * it, the page renders as a plain single column like before.
+ * it, the page renders as a plain single column like before. The rail is
+ * collapsible (a small toggle button, state remembered in localStorage so it
+ * stays collapsed/expanded across page loads).
  */
 export function layout(title: string, body: string, sidebar?: string): string {
   const page = `
@@ -121,9 +131,34 @@ export function layout(title: string, body: string, sidebar?: string): string {
 ${body}`;
   const shellBody = sidebar
     ? `<div class="app-shell">
-  <aside class="app-sidebar">${sidebar}</aside>
+  <aside class="app-sidebar" id="app-sidebar">
+    <button type="button" class="sidebar-toggle" id="sidebar-toggle"></button>
+    ${sidebar}
+  </aside>
   <div class="app-main"><div class="page">${page}</div></div>
-</div>`
+</div>
+<script>
+(function () {
+  var aside = document.getElementById("app-sidebar");
+  var toggle = document.getElementById("sidebar-toggle");
+  var KEY = "claw-sidebar-collapsed";
+  function apply(collapsed) {
+    aside.classList.toggle("collapsed", collapsed);
+    toggle.textContent = collapsed ? "»" : "«";
+    var label = (collapsed ? "Expand" : "Collapse") + " sidebar";
+    toggle.title = label;
+    toggle.setAttribute("aria-label", label);
+  }
+  var collapsed;
+  try { collapsed = localStorage.getItem(KEY) === "1"; } catch (e) { collapsed = false; }
+  apply(collapsed);
+  toggle.addEventListener("click", function () {
+    collapsed = !collapsed;
+    try { localStorage.setItem(KEY, collapsed ? "1" : "0"); } catch (e) {}
+    apply(collapsed);
+  });
+})();
+</script>`
     : `<div class="page">${page}</div>`;
   return `<!doctype html>
 <html lang="en">

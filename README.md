@@ -46,8 +46,9 @@ the REST API; use `discussion=N` (with optional `replyTo=<node-id>`) instead of
 your own GitHub identity (the app's user-to-server token). Whatever you type is
 mirrored to `localStorage` as you go (like GitHub's own comment box) and
 restored if you come back to the same link — cleared once the post actually
-succeeds, kept if it fails. Posting to an issue also links to claw's own
-comment feed (feature 5) for that issue, not just the GitHub URL.
+succeeds, kept if it fails. `⌘`/`Ctrl`+`Enter` submits from the textarea.
+Posting to an issue also links to claw's own comment feed (feature 5) for
+that issue, not just the GitHub URL.
 
 ### 3. Comment relay via webhooks + Grist
 
@@ -129,7 +130,9 @@ commented on, across every repo the relay has seen — grouped to one entry
 per issue, newest first, relative timestamps, linking straight to that
 comment on feature 5's comment feed. Its data loads asynchronously
 (`GET /api/sidebar-activity`, session-gated) so it never blocks the rest of
-the page, and it polls itself every 15s while its tab is visible.
+the page, and it polls itself every 15s while its tab is visible. A small
+`«`/`»` toggle collapses it to a slim rail (state remembered in
+`localStorage`, so it stays collapsed/expanded across page loads).
 
 If a bot comment `@`-mentions you, the entry's excerpt starts at that
 mention and is shown prominently (an orange accent, bold text) — unless
@@ -137,8 +140,9 @@ you've since posted a newer comment on the same issue, in which case it's
 treated as already handled and shown like any other entry. Visiting the
 comment feed for that issue also marks it read, client-side
 (`localStorage`, key `claw-read:<repo>#<issue>`) — the mention stops
-looking prominent, with a "Mark as unread" control to undo it. Requires the
-comment relay (feature 3) to be configured; absent otherwise.
+looking prominent, replaced with a small ↺ icon next to the issue number to
+undo it. Requires the comment relay (feature 3) to be configured; absent
+otherwise.
 
 ## Configuration
 

@@ -191,15 +191,19 @@ export function sidebarHtml(): string {
 
         var btn = document.createElement("button");
         btn.type = "button";
-        btn.className = "secondary mark-unread";
-        btn.textContent = "Mark as unread";
+        btn.className = "mark-unread-icon";
+        btn.title = "Mark as unread";
+        btn.setAttribute("aria-label", "Mark as unread");
+        btn.textContent = "↺";
         btn.addEventListener("click", function () {
           try { localStorage.removeItem(key); } catch (e) {}
           li.classList.add("prominent");
           if (excerpt) excerpt.classList.add("prominent");
           btn.remove();
         });
-        li.appendChild(btn);
+        var link = li.querySelector("a");
+        if (link) link.insertAdjacentElement("afterend", btn);
+        else li.appendChild(btn);
       })(items[i]);
     }
   }

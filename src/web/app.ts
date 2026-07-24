@@ -837,10 +837,14 @@ function draftFormPage(draft: DraftInput): string {
   const { repo, target, body } = draft;
   const number = target.kind === "issue" ? target.issueNumber : target.discussionNumber;
   const replyTo = target.kind === "discussion" && target.replyToId ? target.replyToId : "";
+  const intro = body.trim() !== ""
+    ? `<p>Prefilled comment for <strong>${escapeHtml(repo)}</strong> · ${targetLabel(target)}.</p>
+       <p class="muted">Edit if you like, then post. This is published under <em>your</em> GitHub identity.</p>`
+    : `<p>New comment for <strong>${escapeHtml(repo)}</strong> · ${targetLabel(target)}.</p>
+       <p class="muted">This is published under <em>your</em> GitHub identity.</p>`;
   return `
   <div class="card">
-    <p>Prefilled comment for <strong>${escapeHtml(repo)}</strong> · ${targetLabel(target)}.</p>
-    <p class="muted">Edit if you like, then post. This is published under <em>your</em> GitHub identity.</p>
+    ${intro}
   </div>
   <form method="post" action="/draft">
     <input type="hidden" name="repo" value="${escapeHtml(repo)}">
@@ -849,13 +853,19 @@ function draftFormPage(draft: DraftInput): string {
     <input type="hidden" name="replyTo" value="${escapeHtml(replyTo)}">
     <label for="body">Comment</label>
     <textarea id="body" name="body" required>${escapeHtml(body)}</textarea>
-    <p><button type="submit">Post as me</button></p>
+    <p><button type="submit">Post as me</button> <span class="muted">(or ⌘/Ctrl + Enter)</span></p>
   </form>
   ${backLink()}
   <script>
 (function () {
   var key = ${jsonForScript(draftStorageKey(repo, target))};
   var textarea = document.getElementById("body");
+  textarea.addEventListener("keydown", function (e) {
+    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+      e.preventDefault();
+      textarea.form.requestSubmit();
+    }
+  });
   try {
     if (!textarea.value) {
       var saved = localStorage.getItem(key);
