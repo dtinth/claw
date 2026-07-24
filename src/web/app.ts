@@ -902,7 +902,11 @@ function draftFormPage(draft: DraftInput): string {
   textarea.addEventListener("keydown", function (e) {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
-      textarea.form.requestSubmit();
+      // Safari (notably iPadOS) treats a requestSubmit() called while the
+      // Cmd key is still down as a Cmd-click and opens the result in a new
+      // tab. Deferring past the keydown handler's call stack avoids that.
+      var form = textarea.form;
+      setTimeout(function () { form.requestSubmit(); }, 0);
     }
   });
   try {
