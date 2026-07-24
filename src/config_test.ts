@@ -40,6 +40,7 @@ Deno.test("loadConfig reads optional webhook secret and Grist config", () => {
     apiUrl: "https://grist.example.com/api/docs/abc123", // trailing slash trimmed
     apiKey: "gristkey",
     table: "Comments", // default
+    usageTable: "Usage", // default
   });
 });
 
@@ -50,6 +51,15 @@ Deno.test("loadConfig honours GRIST_TABLE_ID override", () => {
     GRIST_TABLE_ID: "Messages",
   }));
   assertEquals(config.grist?.table, "Messages");
+});
+
+Deno.test("loadConfig honours GRIST_USAGE_TABLE_ID override", () => {
+  const config = loadConfig(fullEnv({
+    GRIST_API_URL: "https://grist.example.com/api/docs/abc123",
+    GRIST_API_KEY: "gristkey",
+    GRIST_USAGE_TABLE_ID: "ClaudeUsage",
+  }));
+  assertEquals(config.grist?.usageTable, "ClaudeUsage");
 });
 
 Deno.test("loadConfig requires GRIST_API_KEY when GRIST_API_URL is set", () => {

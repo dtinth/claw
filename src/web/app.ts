@@ -28,6 +28,7 @@ import {
   sidebarHtml,
 } from "./sidebar.ts";
 import { InvalidFilenameError, type UploadService } from "../storage/upload.ts";
+import { parseUsageReport, renderUsageHtml, usageSectionHtml } from "./usage.ts";
 import { parseIssueCommentEvent, verifyWebhookSignature } from "../webhook.ts";
 import { type ClawGrant, ClawJwtError, createClawJwt, verifyClawJwt } from "../jwt.ts";
 import { type DraftInput, type DraftTarget, parseDraftParams } from "../draft.ts";
@@ -69,7 +70,7 @@ export function createApp(deps: AppDeps) {
   // The sidebar's own data is loaded async by its script, so this is just a
   // static skeleton — safe to build once and hand to every session-gated
   // layout() call, never to a logged-out one.
-  const sidebarForSession = grist ? sidebarHtml() : undefined;
+  const sidebarForSession = grist ? usageSectionHtml() + sidebarHtml() : undefined;
   const secure = config.baseUrl.startsWith("https://");
   const redirectUri = `${config.baseUrl}/auth/callback`;
 
@@ -188,6 +189,44 @@ export function createApp(deps: AppDeps) {
       maxItems: ACTIVITY_MAX_ITEMS,
     });
     return c.html(renderActivityHtml(items, new Date()));
+  });
+
+  // --- browser: sidebar's Claude usage meter, loaded via JS ---------------
+
+  app.use("/api/sidebar-usage", requireSession);
+  app.get("/api/sidebar-usage", async (c) => {
+    if (!grist) return c.text("comment relay is not configured", 503);
+    const usage = await grist.getUsage();
+    return c.html(renderUsageHtml(usage, new Date()));
+  });
+
+  // --- agent API: claw usage-report submits a Claude usage snapshot -------
+
+  app.post("/api/usage-report", async (c) => {
+    const jwt = bearer(c.req.header("authorization"));
+    if (!jwt) return c.json({ error: "missing bearer token" }, 401);
+    try {
+      await verifyClawJwt(jwt, config.jwtSecret);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 401);
+    }
+    if (!grist) return c.json({ error: "comment relay is not configured" }, 503);
+
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const parsed = parseUsageReport(body);
+    if ("error" in parsed) return c.json({ error: parsed.error }, 400);
+
+    try {
+      await grist.upsertUsage({ ...parsed.value, updated: Math.floor(Date.now() / 1000) });
+      return c.json({ ok: true });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
+    }
   });
 
   // --- auth ---------------------------------------------------------------

@@ -47,6 +47,8 @@ export interface GristConfig {
   apiKey: string;
   /** Table name (`GRIST_TABLE_ID`), defaults to `Comments`. */
   table: string;
+  /** Usage-tracking table name (`GRIST_USAGE_TABLE_ID`), defaults to `Usage`. */
+  usageTable: string;
 }
 
 /** S3-compatible storage connection details for the file-upload feature. */
@@ -166,7 +168,8 @@ export function loadConfig(env: Env): Config {
     const apiKey = env.GRIST_API_KEY?.trim();
     if (!apiKey) problems.push("GRIST_API_KEY is required when GRIST_API_URL is set");
     const table = env.GRIST_TABLE_ID?.trim() || "Comments";
-    if (apiUrl && apiKey) grist = { apiUrl, apiKey, table };
+    const usageTable = env.GRIST_USAGE_TABLE_ID?.trim() || "Usage";
+    if (apiUrl && apiKey) grist = { apiUrl, apiKey, table, usageTable };
   }
 
   // Upload storage is optional; if UPLOAD_STORAGE_ENDPOINT is set, the rest of the group is required.

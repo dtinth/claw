@@ -40,10 +40,30 @@ export interface GristClientDeps {
   apiUrl: string;
   /** Grist API key, sent as a bearer token. */
   apiKey: string;
-  /** Table name. */
+  /** Table name for comments. */
   table: string;
+  /** Table name for the Claude usage snapshot. */
+  usageTable: string;
   /** Injectable fetch (defaults to the global). */
   fetch?: typeof fetch;
+}
+
+/**
+ * A Claude Code usage snapshot, as `claw usage-report` submits it — one
+ * account-wide row, upserted on every poll (not a history log).
+ */
+export interface UsageSnapshot {
+  /** When this snapshot was recorded, as epoch seconds. */
+  updated: number;
+  fiveHourPct: number;
+  /** ISO 8601 — when the 5-hour window resets. */
+  fiveHourResetsAt: string;
+  weeklyPct: number;
+  /** ISO 8601 — when the 7-day window resets. */
+  weeklyResetsAt: string;
+  /** Only present on plans with the extra-usage/overage tier enabled. */
+  extraUsageEnabled?: boolean;
+  extraUsagePct?: number;
 }
 
 /** Filter for {@link GristClient.listActivity}. */
@@ -60,6 +80,9 @@ export interface GristClient {
   queryComments(query: CommentQuery): Promise<Comment[]>;
   /** The `authors`' most recent comments across all repos, newest first. */
   listActivity(query: ActivityQuery): Promise<Comment[]>;
+  upsertUsage(snapshot: UsageSnapshot): Promise<void>;
+  /** The current usage snapshot, or `null` if `claw usage-report` has never run. */
+  getUsage(): Promise<UsageSnapshot | null>;
 }
 
 /** Thrown when a Grist API call fails. */
@@ -83,9 +106,38 @@ interface GristRow {
   };
 }
 
+/** `Row_Kind` is a fixed constant so upserts always target the same single row. */
+const USAGE_ROW_KIND = "current";
+
+interface UsageGristRow {
+  fields: {
+    Row_Kind: string;
+    Updated: number;
+    FiveHourPct: number;
+    FiveHourResetsAt: string;
+    WeeklyPct: number;
+    WeeklyResetsAt: string;
+    ExtraUsageEnabled?: boolean;
+    ExtraUsagePct?: number;
+  };
+}
+
+function mapUsageRow({ fields: f }: UsageGristRow): UsageSnapshot {
+  return {
+    updated: f.Updated,
+    fiveHourPct: f.FiveHourPct,
+    fiveHourResetsAt: f.FiveHourResetsAt,
+    weeklyPct: f.WeeklyPct,
+    weeklyResetsAt: f.WeeklyResetsAt,
+    ...(typeof f.ExtraUsageEnabled === "boolean" ? { extraUsageEnabled: f.ExtraUsageEnabled } : {}),
+    ...(typeof f.ExtraUsagePct === "number" ? { extraUsagePct: f.ExtraUsagePct } : {}),
+  };
+}
+
 export function createGristClient(deps: GristClientDeps): GristClient {
   const fetchFn = deps.fetch ?? fetch;
   const recordsUrl = `${deps.apiUrl.replace(/\/$/, "")}/tables/${deps.table}/records`;
+  const usageRecordsUrl = `${deps.apiUrl.replace(/\/$/, "")}/tables/${deps.usageTable}/records`;
   const headers = {
     "Authorization": `Bearer ${deps.apiKey}`,
     "Content-Type": "application/json",
@@ -155,6 +207,38 @@ export function createGristClient(deps: GristClientDeps): GristClient {
 
       const payload = await response.json() as { records: GristRow[] };
       return payload.records.map(mapRow);
+    },
+
+    async upsertUsage(snapshot) {
+      const { extraUsageEnabled, extraUsagePct, ...rest } = snapshot;
+      const fields = {
+        Row_Kind: USAGE_ROW_KIND,
+        Updated: rest.updated,
+        FiveHourPct: rest.fiveHourPct,
+        FiveHourResetsAt: rest.fiveHourResetsAt,
+        WeeklyPct: rest.weeklyPct,
+        WeeklyResetsAt: rest.weeklyResetsAt,
+        ...(extraUsageEnabled !== undefined ? { ExtraUsageEnabled: extraUsageEnabled } : {}),
+        ...(extraUsagePct !== undefined ? { ExtraUsagePct: extraUsagePct } : {}),
+      };
+      const response = await fetchFn(usageRecordsUrl, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ records: [{ require: { Row_Kind: USAGE_ROW_KIND }, fields }] }),
+      });
+      if (!response.ok) await fail(response, "usage upsert");
+    },
+
+    async getUsage() {
+      const url = new URL(usageRecordsUrl);
+      url.searchParams.set("filter", JSON.stringify({ Row_Kind: [USAGE_ROW_KIND] }));
+
+      const response = await fetchFn(url.toString(), { headers });
+      if (!response.ok) await fail(response, "usage query");
+
+      const payload = await response.json() as { records: UsageGristRow[] };
+      const row = payload.records[0];
+      return row ? mapUsageRow(row) : null;
     },
   };
 }

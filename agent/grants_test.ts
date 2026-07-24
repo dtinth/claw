@@ -1,5 +1,24 @@
 import { assertEquals, assertRejects, assertThrows } from "@std/assert";
-import { findGrant, GrantsError, loadGrants, upsertGrant } from "./grants.ts";
+import {
+  findGrant,
+  GrantsError,
+  loadGrants,
+  pickFurthestExpiringGrant,
+  upsertGrant,
+} from "./grants.ts";
+
+function base64Url(input: string): string {
+  const bytes = new TextEncoder().encode(input);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function fakeClawJwt(payload: Record<string, unknown>): string {
+  const header = base64Url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const body = base64Url(JSON.stringify(payload));
+  return `${header}.${body}.not-a-real-signature`;
+}
 
 async function withTempFile(content: string | undefined, fn: (path: string) => Promise<void>) {
   const dir = await Deno.makeTempDir();
@@ -99,4 +118,29 @@ Deno.test("upsertGrant refuses to clobber a malformed existing file", async () =
     // The original (broken) content must be untouched.
     assertEquals(await Deno.readTextFile(path), "not json");
   });
+});
+
+Deno.test("pickFurthestExpiringGrant picks the grant with the latest exp claim", () => {
+  const soon = fakeClawJwt({ sub: "dtinth/a", exp: 1000 });
+  const later = fakeClawJwt({ sub: "dtinth/b", exp: 5000 });
+  const store = { "dtinth/a": soon, "dtinth/b": later };
+  assertEquals(pickFurthestExpiringGrant(store), later);
+});
+
+Deno.test("pickFurthestExpiringGrant treats a missing exp claim as furthest-out", () => {
+  const soon = fakeClawJwt({ sub: "dtinth/a", exp: 1000 });
+  const noExpiry = fakeClawJwt({ sub: "dtinth/b" });
+  const store = { "dtinth/a": soon, "dtinth/b": noExpiry };
+  assertEquals(pickFurthestExpiringGrant(store), noExpiry);
+});
+
+Deno.test("pickFurthestExpiringGrant skips a grant that doesn't decode as a claw JWT", () => {
+  const good = fakeClawJwt({ sub: "dtinth/a", exp: 1000 });
+  const store = { "dtinth/broken": "not-a-jwt", "dtinth/a": good };
+  assertEquals(pickFurthestExpiringGrant(store), good);
+});
+
+Deno.test("pickFurthestExpiringGrant throws when there are no usable grants", () => {
+  assertThrows(() => pickFurthestExpiringGrant({}), GrantsError);
+  assertThrows(() => pickFurthestExpiringGrant({ "dtinth/a": "not-a-jwt" }), GrantsError);
 });

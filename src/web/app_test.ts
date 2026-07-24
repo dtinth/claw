@@ -63,6 +63,8 @@ function fakeGrist(overrides: Partial<GristClient> = {}): GristClient {
     upsertComment: () => Promise.resolve(),
     queryComments: () => Promise.resolve([]),
     listActivity: () => Promise.resolve([]),
+    upsertUsage: () => Promise.resolve(),
+    getUsage: () => Promise.resolve(null),
     ...overrides,
   };
 }
@@ -189,6 +191,123 @@ Deno.test("GET /api/sidebar-activity returns 503 when the relay is not configure
     headers: { cookie: await sessionCookie() },
   });
   assertEquals(res.status, 503);
+});
+
+// --- GET /api/sidebar-usage --------------------------------------------------
+
+Deno.test("GET /api/sidebar-usage redirects to login when logged out", async () => {
+  const res = await makeApp(fakeGitHub(), { grist: fakeGrist() }).request(
+    "/api/sidebar-usage",
+    { redirect: "manual" },
+  );
+  assertEquals(res.status, 302);
+  assertEquals(res.headers.get("location"), "/auth/login");
+});
+
+Deno.test("GET /api/sidebar-usage renders the current snapshot", async () => {
+  const grist = fakeGrist({
+    getUsage: () =>
+      Promise.resolve({
+        updated: 1719900000,
+        fiveHourPct: 68,
+        fiveHourResetsAt: "2099-01-01T00:00:00Z",
+        weeklyPct: 31,
+        weeklyResetsAt: "2099-01-08T00:00:00Z",
+      }),
+  });
+  const res = await makeApp(fakeGitHub(), { grist }).request("/api/sidebar-usage", {
+    headers: { cookie: await sessionCookie() },
+  });
+  assertEquals(res.status, 200);
+  const html = await res.text();
+  assertStringIncludes(html, "68%");
+  assertStringIncludes(html, "31%");
+});
+
+Deno.test("GET /api/sidebar-usage returns 503 when the relay is not configured", async () => {
+  const res = await makeApp(fakeGitHub()).request("/api/sidebar-usage", {
+    headers: { cookie: await sessionCookie() },
+  });
+  assertEquals(res.status, 503);
+});
+
+// --- POST /api/usage-report ---------------------------------------------------
+
+const VALID_USAGE_REPORT = {
+  fiveHourPct: 68,
+  fiveHourResetsAt: "2099-01-01T00:00:00Z",
+  weeklyPct: 31,
+  weeklyResetsAt: "2099-01-08T00:00:00Z",
+};
+
+Deno.test("POST /api/usage-report upserts the snapshot for a valid claw JWT", async () => {
+  let received: unknown = null;
+  const grist = fakeGrist({
+    upsertUsage: (snapshot) => {
+      received = snapshot;
+      return Promise.resolve();
+    },
+  });
+  const jwt = await createClawJwt(
+    { repo: "dtinth/claw", permissions: { issues: "read" }, ttlSeconds: 3600 },
+    config.jwtSecret,
+  );
+  const res = await makeApp(fakeGitHub(), { grist }).request("/api/usage-report", {
+    method: "POST",
+    headers: { authorization: `Bearer ${jwt}`, "content-type": "application/json" },
+    body: JSON.stringify(VALID_USAGE_REPORT),
+  });
+  assertEquals(res.status, 200);
+  assertEquals((await res.json()).ok, true);
+  assertEquals(
+    (received as { fiveHourPct: number } | null)?.fiveHourPct,
+    68,
+  );
+  assertEquals(typeof (received as { updated: number }).updated, "number");
+});
+
+Deno.test("POST /api/usage-report rejects a missing token with 401", async () => {
+  const res = await makeApp(fakeGitHub(), { grist: fakeGrist() }).request("/api/usage-report", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(VALID_USAGE_REPORT),
+  });
+  assertEquals(res.status, 401);
+});
+
+Deno.test("POST /api/usage-report rejects an invalid token with 401", async () => {
+  const res = await makeApp(fakeGitHub(), { grist: fakeGrist() }).request("/api/usage-report", {
+    method: "POST",
+    headers: { authorization: "Bearer not.a.jwt", "content-type": "application/json" },
+    body: JSON.stringify(VALID_USAGE_REPORT),
+  });
+  assertEquals(res.status, 401);
+});
+
+Deno.test("POST /api/usage-report returns 503 when the relay is not configured", async () => {
+  const jwt = await createClawJwt(
+    { repo: "dtinth/claw", permissions: { issues: "read" }, ttlSeconds: 3600 },
+    config.jwtSecret,
+  );
+  const res = await makeApp(fakeGitHub()).request("/api/usage-report", {
+    method: "POST",
+    headers: { authorization: `Bearer ${jwt}`, "content-type": "application/json" },
+    body: JSON.stringify(VALID_USAGE_REPORT),
+  });
+  assertEquals(res.status, 503);
+});
+
+Deno.test("POST /api/usage-report returns 400 on a malformed body", async () => {
+  const jwt = await createClawJwt(
+    { repo: "dtinth/claw", permissions: { issues: "read" }, ttlSeconds: 3600 },
+    config.jwtSecret,
+  );
+  const res = await makeApp(fakeGitHub(), { grist: fakeGrist() }).request("/api/usage-report", {
+    method: "POST",
+    headers: { authorization: `Bearer ${jwt}`, "content-type": "application/json" },
+    body: JSON.stringify({ fiveHourPct: "not a number" }),
+  });
+  assertEquals(res.status, 400);
 });
 
 Deno.test("a session for a different login is not accepted", async () => {

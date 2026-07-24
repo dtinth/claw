@@ -40,6 +40,7 @@ const DEPS = {
   apiUrl: "https://grist.example.com/api/docs/abc123",
   apiKey: "gristkey",
   table: "Comments",
+  usageTable: "Usage",
 };
 
 Deno.test("upsertComment PUTs an add-or-update keyed by Comment_ID", async () => {
@@ -187,6 +188,115 @@ Deno.test("listActivity throws GristApiError on a failure response", async () =>
     () => client.listActivity({ authors: ["dtinth-claw[bot]"], limit: 20 }),
     GristApiError,
   );
+});
+
+const SAMPLE_SNAPSHOT = {
+  updated: 1719900000,
+  fiveHourPct: 68,
+  fiveHourResetsAt: "2026-07-24T18:30:00Z",
+  weeklyPct: 31,
+  weeklyResetsAt: "2026-07-28T00:00:00Z",
+};
+
+Deno.test("upsertUsage PUTs to the usage table, keyed by the fixed Row_Kind", async () => {
+  const { fn, calls } = fakeFetch(() => json({ records: [{ id: 1 }] }));
+  const client = createGristClient({ ...DEPS, fetch: fn });
+
+  await client.upsertUsage(SAMPLE_SNAPSHOT);
+
+  const call = calls[0]!;
+  assertEquals(call.method, "PUT");
+  assertEquals(call.url, "https://grist.example.com/api/docs/abc123/tables/Usage/records");
+  const body = call.body as { records: Array<{ require: unknown; fields: unknown }> };
+  assertEquals(body.records[0]!.require, { Row_Kind: "current" });
+  assertEquals(body.records[0]!.fields, {
+    Row_Kind: "current",
+    Updated: 1719900000,
+    FiveHourPct: 68,
+    FiveHourResetsAt: "2026-07-24T18:30:00Z",
+    WeeklyPct: 31,
+    WeeklyResetsAt: "2026-07-28T00:00:00Z",
+  });
+});
+
+Deno.test("upsertUsage includes extra-usage fields only when given", async () => {
+  const { fn, calls } = fakeFetch(() => json({ records: [{ id: 1 }] }));
+  const client = createGristClient({ ...DEPS, fetch: fn });
+
+  await client.upsertUsage({ ...SAMPLE_SNAPSHOT, extraUsageEnabled: true, extraUsagePct: 12 });
+
+  const body = calls[0]!.body as { records: Array<{ fields: Record<string, unknown> }> };
+  assertEquals(body.records[0]!.fields.ExtraUsageEnabled, true);
+  assertEquals(body.records[0]!.fields.ExtraUsagePct, 12);
+});
+
+Deno.test("upsertUsage throws GristApiError on a failure response", async () => {
+  const { fn } = fakeFetch(() => json({ error: "nope" }, 500));
+  const client = createGristClient({ ...DEPS, fetch: fn });
+  await assertRejects(() => client.upsertUsage(SAMPLE_SNAPSHOT), GristApiError);
+});
+
+Deno.test("getUsage returns the single current row", async () => {
+  const { fn, calls } = fakeFetch(() =>
+    json({
+      records: [{
+        id: 1,
+        fields: {
+          Row_Kind: "current",
+          Updated: 1719900000,
+          FiveHourPct: 68,
+          FiveHourResetsAt: "2026-07-24T18:30:00Z",
+          WeeklyPct: 31,
+          WeeklyResetsAt: "2026-07-28T00:00:00Z",
+        },
+      }],
+    })
+  );
+  const client = createGristClient({ ...DEPS, fetch: fn });
+
+  const usage = await client.getUsage();
+
+  assertEquals(usage, SAMPLE_SNAPSHOT);
+  const filter = new URL(calls[0]!.url).searchParams.get("filter")!;
+  assertEquals(JSON.parse(filter), { Row_Kind: ["current"] });
+});
+
+Deno.test("getUsage returns null when there is no row yet", async () => {
+  const { fn } = fakeFetch(() => json({ records: [] }));
+  const client = createGristClient({ ...DEPS, fetch: fn });
+  assertEquals(await client.getUsage(), null);
+});
+
+Deno.test("getUsage includes extra-usage fields when present", async () => {
+  const { fn } = fakeFetch(() =>
+    json({
+      records: [{
+        id: 1,
+        fields: { ...SAMPLE_SNAPSHOT_FIELDS(), ExtraUsageEnabled: true, ExtraUsagePct: 12 },
+      }],
+    })
+  );
+  const client = createGristClient({ ...DEPS, fetch: fn });
+  const usage = await client.getUsage();
+  assertEquals(usage?.extraUsageEnabled, true);
+  assertEquals(usage?.extraUsagePct, 12);
+});
+
+function SAMPLE_SNAPSHOT_FIELDS() {
+  return {
+    Row_Kind: "current",
+    Updated: SAMPLE_SNAPSHOT.updated,
+    FiveHourPct: SAMPLE_SNAPSHOT.fiveHourPct,
+    FiveHourResetsAt: SAMPLE_SNAPSHOT.fiveHourResetsAt,
+    WeeklyPct: SAMPLE_SNAPSHOT.weeklyPct,
+    WeeklyResetsAt: SAMPLE_SNAPSHOT.weeklyResetsAt,
+  };
+}
+
+Deno.test("getUsage throws GristApiError on a failure response", async () => {
+  const { fn } = fakeFetch(() => json({ error: "nope" }, 500));
+  const client = createGristClient({ ...DEPS, fetch: fn });
+  await assertRejects(() => client.getUsage(), GristApiError);
 });
 
 Deno.test("upsertComment throws GristApiError on a failure response", async () => {

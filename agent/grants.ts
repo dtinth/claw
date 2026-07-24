@@ -3,6 +3,7 @@
  * that repo. This is the CLI's only credential store — it never sees the
  * server's private key or `CLAW_JWT_SECRET`.
  */
+import { decodeClawJwtPayload } from "./jwt_decode.ts";
 
 /** `owner/repo` -> claw JWT. */
 export type GrantsStore = Record<string, string>;
@@ -114,4 +115,33 @@ export async function upsertGrant(
   }
 
   return { replaced };
+}
+
+/**
+ * Pick whichever grant has the furthest-out expiry. For features that
+ * aren't tied to a specific repo (e.g. `claw usage-report`), any valid claw
+ * JWT works as a bearer credential — picking the longest-lived one just
+ * minimizes how often it needs re-granting. A grant that fails to decode
+ * (corrupt or not actually a claw JWT) is skipped rather than failing the
+ * whole lookup; one with no `exp` claim sorts as furthest-out (never expires).
+ *
+ * @throws {GrantsError} when the store has no grants that decode as a claw JWT.
+ */
+export function pickFurthestExpiringGrant(store: GrantsStore): string {
+  let best: { jwt: string; expiresAt: number } | null = null;
+  for (const jwt of Object.values(store)) {
+    let expiresAt: number;
+    try {
+      expiresAt = decodeClawJwtPayload(jwt).expiresAt?.getTime() ?? Infinity;
+    } catch {
+      continue;
+    }
+    if (!best || expiresAt > best.expiresAt) best = { jwt, expiresAt };
+  }
+  if (!best) {
+    throw new GrantsError(
+      "no usable grants — mint a claw JWT for any repo and add it with `claw grant`",
+    );
+  }
+  return best.jwt;
 }

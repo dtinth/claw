@@ -7,6 +7,7 @@
  * exercised in tests via temp dirs.
  */
 import { clearCache } from "./cache.ts";
+import { defaultClaudeCredentialsPath } from "./claude_credentials.ts";
 import { loadConfigOrEmpty, setBaseUrl } from "./config_store.ts";
 import { findGrant, loadGrants, upsertGrant } from "./grants.ts";
 import { decodeClawJwtPayload } from "./jwt_decode.ts";
@@ -16,11 +17,13 @@ import { type Paths, resolvePaths } from "./paths.ts";
 import { resolveRepo } from "./resolve_repo.ts";
 import { getToken } from "./token.ts";
 import { createUploadClient } from "./upload_client.ts";
+import { runUsageReportLoop } from "./usage_loop.ts";
 
 const MONITOR_USAGE =
   "usage: claw monitor <issue> [--repo owner/repo] [--authors a,b] [--interval 10]";
 const UPLOAD_USAGE =
   "usage: claw upload <path> [--repo owner/repo] [--keep-filename | --filename name]";
+const USAGE_REPORT_USAGE = "usage: claw usage-report [--interval 60]";
 
 const HELP_TEXT = `claw — mint repo-scoped GitHub tokens from a claw JWT
 
@@ -33,6 +36,7 @@ Usage:
                                          Poll for new comments on one issue/PR, one JSON per line
   claw upload <path> [--repo owner/repo] [--keep-filename | --filename name]
                                          Upload a file, print its public URL
+  claw usage-report [--interval 60]     Poll Claude Code's usage and report it to claw
   claw setup                            Point git's github.com credential helper at gh
   claw doctor                           Check config, grants, and git wiring
 
@@ -40,8 +44,9 @@ Repo resolution: --repo, then $CLAW_REPO, then the git origin remote.
 Server resolution: $CLAW_BASE_URL, then the config file (\`claw set server <url>\`).
 
 Config:
-  CLAW_CONFIG_DIR    grants.json/config.json directory (default: \${XDG_CONFIG_HOME:-~/.config}/claw)
-  CLAW_CACHE_DIR     token cache directory (default: \${XDG_CACHE_HOME:-~/.cache}/claw)
+  CLAW_CONFIG_DIR          grants.json/config.json directory (default: \${XDG_CONFIG_HOME:-~/.config}/claw)
+  CLAW_CACHE_DIR           token cache directory (default: \${XDG_CACHE_HOME:-~/.cache}/claw)
+  CLAUDE_CREDENTIALS_PATH  Claude Code's credentials file, for \`usage-report\` (default: ~/.claude/.credentials.json)
 
 Grants file ($CLAW_CONFIG_DIR/grants.json): {"owner/repo": "<claw JWT>"}
 `;
@@ -284,6 +289,73 @@ async function cmdMonitor(args: string[], rt: Runtime): Promise<number> {
   } catch {
     return 1;
   }
+}
+
+interface UsageReportArgs {
+  intervalSeconds?: number;
+  error?: string;
+}
+
+function parseUsageReportArgs(args: string[]): UsageReportArgs {
+  let intervalSeconds: number | undefined;
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--interval") {
+      intervalSeconds = Number(args[++i]);
+    } else if (arg.startsWith("--interval=")) {
+      intervalSeconds = Number(arg.slice("--interval=".length));
+    } else {
+      return { error: USAGE_REPORT_USAGE };
+    }
+  }
+  if (
+    intervalSeconds !== undefined && (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0)
+  ) {
+    return { error: "claw: --interval must be a positive number of seconds" };
+  }
+  return intervalSeconds !== undefined ? { intervalSeconds } : {};
+}
+
+async function cmdUsageReport(args: string[], rt: Runtime): Promise<number> {
+  const parsed = parseUsageReportArgs(args);
+  if (parsed.error) {
+    rt.stderr(parsed.error + "\n");
+    return 1;
+  }
+  const intervalMs = (parsed.intervalSeconds ?? 60) * 1000;
+
+  const paths = resolvePaths(rt.env);
+  const baseUrl = await resolveBaseUrlValue(rt, paths);
+  if (!baseUrl) {
+    rt.stderr(
+      "claw: no claw server configured — export CLAW_BASE_URL, or run `claw set server <url>`\n",
+    );
+    return 1;
+  }
+  const home = rt.env.HOME;
+  if (!home && !rt.env.CLAUDE_CREDENTIALS_PATH) {
+    rt.stderr(
+      "claw: HOME is not set — cannot locate ~/.claude/.credentials.json (or set CLAUDE_CREDENTIALS_PATH)\n",
+    );
+    return 1;
+  }
+  const credentialsPath = rt.env.CLAUDE_CREDENTIALS_PATH?.trim() ||
+    defaultClaudeCredentialsPath(home!);
+
+  rt.stderr(
+    `claw usage-report: polling every ${intervalMs / 1000}s (Ctrl-C to stop)...\n`,
+  );
+
+  await runUsageReportLoop({
+    intervalMs,
+    configDir: paths.configDir,
+    credentialsPath,
+    baseUrl,
+    fetch: rt.fetch,
+    stderr: rt.stderr,
+    sleep: rt.sleep,
+  });
+  return 0;
 }
 
 interface UploadArgs {
@@ -541,6 +613,8 @@ export async function runCli(argv: string[], rt: Runtime): Promise<number> {
         return await cmdMonitor(rest, rt);
       case "upload":
         return await cmdUpload(rest, rt);
+      case "usage-report":
+        return await cmdUsageReport(rest, rt);
       case "token":
         return await cmdToken(rest, rt);
       case "exec":

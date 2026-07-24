@@ -112,6 +112,15 @@ const STYLE = `
   }
   .mark-unread-icon:hover { color: inherit; }
   .earlier-comments summary { cursor: pointer; color: gray; margin-bottom: .5rem; }
+  .usage-meter { display: flex; flex-direction: column; gap: .6rem; margin-bottom: 1rem; }
+  .usage-row { display: grid; grid-template-columns: 1.5rem 2.5rem 1fr auto; gap: .4rem; align-items: center; font-size: .8rem; }
+  .usage-label { font-weight: 600; }
+  .usage-pct { text-align: right; }
+  .usage-bar { grid-column: 3; height: .5rem; background: #8883; border-radius: 999px; overflow: hidden; }
+  .usage-bar-fill { height: 100%; background: #2563eb; }
+  .usage-resets { grid-column: 1 / -1; font-size: .7rem; }
+  .pacemaker-ahead { color: #16a34a; }
+  .pacemaker-behind { color: #d97706; }
 `;
 
 /**

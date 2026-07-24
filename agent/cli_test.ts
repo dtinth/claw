@@ -496,6 +496,42 @@ Deno.test("monitor: rejects a non-positive --interval", async () => {
   assertStringIncludes(stderr.join(""), "--interval");
 });
 
+// --- claw usage-report -------------------------------------------------------
+//
+// Only the fast-fail validation paths are covered here, same reasoning as
+// monitor: the actual loop is usage_loop_test.ts's job, exercised directly
+// against runUsageReportLoop with a bounded shouldStop.
+
+Deno.test("usage-report: rejects a non-positive --interval", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["usage-report", "--interval", "0"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "--interval");
+});
+
+Deno.test("usage-report: rejects an unknown flag", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["usage-report", "--bogus"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "usage");
+});
+
+Deno.test("usage-report: fails cleanly when no claw server is configured", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["usage-report"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "CLAW_BASE_URL");
+});
+
+Deno.test("usage-report: fails cleanly when HOME is unset and there's no CLAUDE_CREDENTIALS_PATH override", async () => {
+  const { rt, stderr } = makeFakeRuntime({
+    env: { CLAW_BASE_URL: "https://claw.example.com" },
+  });
+  const code = await runCli(["usage-report"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "HOME");
+});
+
 // --- resolveUploadFilename ---------------------------------------------------
 
 Deno.test("resolveUploadFilename: --filename wins outright", () => {
