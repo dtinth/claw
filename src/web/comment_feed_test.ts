@@ -65,6 +65,33 @@ Deno.test("renderCommentsHtml escapes the author name and URL (no injection via 
   assertEquals(html.includes("<script>alert(1)</script>"), false);
 });
 
+Deno.test("renderCommentsHtml shows all comments expanded when there are 5 or fewer", () => {
+  const comments = Array.from({ length: 5 }, (_, i) => comment({ commentId: i + 1 }));
+  const html = renderCommentsHtml(comments);
+  assertEquals(html.includes("<details"), false);
+  for (const c of comments) assertStringIncludes(html, `id="issuecomment-${c.commentId}"`);
+});
+
+Deno.test("renderCommentsHtml collapses everything but the last 5 behind a <details> toggle", () => {
+  const comments = Array.from({ length: 8 }, (_, i) => comment({ commentId: i + 1 }));
+  const html = renderCommentsHtml(comments);
+
+  const detailsEnd = html.indexOf("</details>");
+  assertStringIncludes(html, "<summary>Show 3 earlier comments</summary>");
+  // Comments 1–3 (earlier) must be inside the <details>; 4–8 (recent) outside it.
+  for (let id = 1; id <= 3; id++) {
+    assertEquals(html.indexOf(`id="issuecomment-${id}"`) < detailsEnd, true);
+  }
+  for (let id = 4; id <= 8; id++) {
+    assertEquals(html.indexOf(`id="issuecomment-${id}"`) > detailsEnd, true);
+  }
+});
+
+Deno.test("renderCommentsHtml uses singular wording for exactly one earlier comment", () => {
+  const comments = Array.from({ length: 6 }, (_, i) => comment({ commentId: i + 1 }));
+  assertStringIncludes(renderCommentsHtml(comments), "Show 1 earlier comment<");
+});
+
 Deno.test("issuePage embeds the given comments HTML and a Reply link to /draft", () => {
   const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "<p>MARKER</p>" });
   assertStringIncludes(html, "<p>MARKER</p>");
@@ -93,4 +120,29 @@ Deno.test("issuePage includes a polling script that refetches with ?partial=1", 
   const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "" });
   assertStringIncludes(html, "?partial=1");
   assertStringIncludes(html, 'id="comments"');
+});
+
+Deno.test("issuePage marks the thread read (for the sidebar) when a latestCommentId is given", () => {
+  const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "", latestCommentId: 42 });
+  assertStringIncludes(html, "claw-read:dtinth/claw#24");
+  assertStringIncludes(html, "localStorage.setItem");
+  assertStringIncludes(html, '"42"');
+});
+
+Deno.test("issuePage does not touch localStorage when there's no latestCommentId (no comments yet)", () => {
+  const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "" });
+  assertEquals(html.includes("localStorage.setItem"), false);
+});
+
+Deno.test("issuePage forces open an ancestor <details> and scrolls when linked to a specific comment", () => {
+  const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "" });
+  assertStringIncludes(html, "location.hash");
+  assertStringIncludes(html, 'closest("details")');
+  assertStringIncludes(html, "scrollIntoView()"); // no argument — no smooth-scroll behavior requested
+});
+
+Deno.test("issuePage's refresh preserves an open earlier-comments <details> across a poll", () => {
+  const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "" });
+  assertStringIncludes(html, "details.earlier-comments");
+  assertStringIncludes(html, "wasOpen");
 });

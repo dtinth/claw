@@ -26,6 +26,8 @@ const EXCERPT_MAX_LENGTH = 140;
 export interface ActivityItem {
   repo: string;
   issue: number;
+  /** The bot comment this entry represents — also the sidebar link's `#issuecomment-<id>` scroll target. */
+  commentId: number;
   time?: number;
   excerpt: string;
   /** True when the excerpt starts at an unaddressed @mention of the human. */
@@ -87,6 +89,7 @@ export function groupLatestActivity(
     items.push({
       repo: c.repo,
       issue: c.issue,
+      commentId: c.commentId,
       ...(c.time !== undefined ? { time: c.time } : {}),
       excerpt: truncate(text, EXCERPT_MAX_LENGTH),
       ...(mentioned && !respondedSince ? { prominent: true } : {}),
@@ -121,7 +124,14 @@ export function formatRelativeTime(epochSeconds: number, now: Date): string {
   return plural(Math.round(years), "year");
 }
 
-/** Render the activity list as an HTML fragment (what `GET /api/sidebar-activity` returns). */
+/**
+ * Render the activity list as an HTML fragment (what `GET /api/sidebar-activity`
+ * returns). A prominent item carries `data-repo`/`data-issue`/`data-comment-id`
+ * so the sidebar's own script (see {@link sidebarHtml}) can look up its
+ * client-side "read" state and, if already read, demote it and offer
+ * "Mark as unread" — that tracking is deliberately client-only, so the
+ * server always renders the mention-based prominence as if unread.
+ */
 export function renderActivityHtml(items: ActivityItem[], now: Date): string {
   if (items.length === 0) {
     return `<li class="muted">No activity yet.</li>`;
@@ -133,8 +143,12 @@ export function renderActivityHtml(items: ActivityItem[], now: Date): string {
       }">${escapeHtml(formatRelativeTime(item.time, now))}</time>`
       : "";
     const excerptClass = item.prominent ? "excerpt prominent" : "excerpt";
-    return `<li${item.prominent ? ' class="prominent"' : ""}>
-      <a href="/${escapeHtml(item.repo)}/issues/${item.issue}">${
+    const liAttrs = item.prominent
+      ? ` class="prominent" data-repo="${escapeHtml(item.repo)}" data-issue="${item.issue}"` +
+        ` data-comment-id="${item.commentId}"`
+      : "";
+    return `<li${liAttrs}>
+      <a href="/${escapeHtml(item.repo)}/issues/${item.issue}#issuecomment-${item.commentId}">${
       escapeHtml(item.repo)
     }#${item.issue}</a>${time}
       <p class="${excerptClass}">${escapeHtml(item.excerpt)}</p>
@@ -142,14 +156,18 @@ export function renderActivityHtml(items: ActivityItem[], now: Date): string {
   }).join("\n");
 }
 
-/**
- * The sidebar's static skeleton — embedded inside the shared `layout()`'s
- * `<aside>`. Renders a loading placeholder immediately, then fetches the
- * real list.
- */
 /** How often the sidebar refetches while its tab is visible. */
 const REFRESH_INTERVAL_MS = 15_000;
 
+/**
+ * The sidebar's static skeleton — embedded inside the shared `layout()`'s
+ * `<aside>`. Renders a loading placeholder immediately, then fetches the
+ * real list and applies the client-side "read" overrides (see
+ * {@link renderActivityHtml}): a thread is marked read by visiting its
+ * comment feed page (`issuePage` in comment_feed.ts writes the same
+ * `claw-read:<repo>#<issue>` key), which this then uses to demote a
+ * mention from prominent — with a "Mark as unread" control to undo it.
+ */
 export function sidebarHtml(): string {
   return `
     <h3>Recent bot activity</h3>
@@ -157,10 +175,39 @@ export function sidebarHtml(): string {
     <script>
 (function () {
   var list = document.getElementById("sidebar-activity");
+
+  function applyReadState() {
+    var items = list.querySelectorAll("li.prominent[data-comment-id]");
+    for (var i = 0; i < items.length; i++) {
+      (function (li) {
+        var key = "claw-read:" + li.getAttribute("data-repo") + "#" + li.getAttribute("data-issue");
+        var readId;
+        try { readId = localStorage.getItem(key); } catch (e) { readId = null; }
+        if (readId === null || Number(readId) < Number(li.getAttribute("data-comment-id"))) return;
+
+        var excerpt = li.querySelector(".excerpt");
+        li.classList.remove("prominent");
+        if (excerpt) excerpt.classList.remove("prominent");
+
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "secondary mark-unread";
+        btn.textContent = "Mark as unread";
+        btn.addEventListener("click", function () {
+          try { localStorage.removeItem(key); } catch (e) {}
+          li.classList.add("prominent");
+          if (excerpt) excerpt.classList.add("prominent");
+          btn.remove();
+        });
+        li.appendChild(btn);
+      })(items[i]);
+    }
+  }
+
   function load() {
     fetch("/api/sidebar-activity")
       .then(function (r) { return r.ok ? r.text() : Promise.reject(); })
-      .then(function (html) { list.innerHTML = html; })
+      .then(function (html) { list.innerHTML = html; applyReadState(); })
       .catch(function () { list.innerHTML = '<li class="muted">Couldn\\'t load activity.</li>'; });
   }
   load();

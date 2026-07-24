@@ -100,6 +100,10 @@ const STYLE = `
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
   .sidebar-list .excerpt.prominent { color: inherit; font-weight: 600; }
+  .sidebar-list button.mark-unread {
+    display: block; margin-top: .3rem; padding: .15rem .5rem; font-size: .7rem; font-weight: 500;
+  }
+  .earlier-comments summary { cursor: pointer; color: gray; margin-bottom: .5rem; }
 `;
 
 /**

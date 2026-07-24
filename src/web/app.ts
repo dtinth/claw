@@ -496,10 +496,16 @@ export function createApp(deps: AppDeps) {
     const comments = await grist.queryComments({ repo, issue });
     const commentsHtml = renderCommentsHtml(comments);
     if (partial) return c.html(commentsHtml);
+    const latestCommentId = comments.at(-1)?.commentId;
     return c.html(
       layout(
         `claw — ${repo}#${issue}`,
-        issuePage({ repo, issue, commentsHtml }),
+        issuePage({
+          repo,
+          issue,
+          commentsHtml,
+          ...(latestCommentId !== undefined ? { latestCommentId } : {}),
+        }),
         sidebarForSession,
       ),
     );

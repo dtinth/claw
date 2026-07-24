@@ -180,7 +180,7 @@ Deno.test("GET /api/sidebar-activity returns the grouped, rendered activity list
   });
   assertEquals(res.status, 200);
   const html = await res.text();
-  assertStringIncludes(html, 'href="/dtinth/claw/issues/5"');
+  assertStringIncludes(html, 'href="/dtinth/claw/issues/5#issuecomment-1"');
   assertEquals(receivedQuery, { authors: ["dtinth-claw[bot]", "dtinth"], limit: 400 });
 });
 

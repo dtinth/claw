@@ -122,6 +122,11 @@ Deno.test("groupLatestActivity keeps a mention prominent if the human's reply is
   assertEquals(items[0]!.prominent, true);
 });
 
+Deno.test("groupLatestActivity carries the chosen comment's id, for the sidebar's deep link and read tracking", () => {
+  const items = groupLatestActivity([comment({ commentId: 42 })], OPTS);
+  assertEquals(items[0]!.commentId, 42);
+});
+
 Deno.test("groupLatestActivity only clears prominence for a reply on the same issue", () => {
   const rows = [
     comment({ repo: "dtinth/claw", author: BOT, issue: 5, time: 100, body: "@dtinth ping" }),
@@ -153,39 +158,54 @@ Deno.test("renderActivityHtml shows an empty state", () => {
   assertStringIncludes(renderActivityHtml([], NOW), "No activity");
 });
 
-Deno.test("renderActivityHtml links each item to claw's own comment feed, with excerpt and relative time", () => {
+Deno.test("renderActivityHtml links each item to the specific comment on claw's own feed, with excerpt and relative time", () => {
   const html = renderActivityHtml(
-    [{ repo: "dtinth/claw", issue: 5, time: 1709294400, excerpt: "an excerpt" }],
+    [{ repo: "dtinth/claw", issue: 5, commentId: 42, time: 1709294400, excerpt: "an excerpt" }],
     NOW,
   );
-  assertStringIncludes(html, 'href="/dtinth/claw/issues/5"');
+  assertStringIncludes(html, 'href="/dtinth/claw/issues/5#issuecomment-42"');
   assertStringIncludes(html, "dtinth/claw#5");
   assertStringIncludes(html, "an excerpt");
   assertStringIncludes(html, "<time");
 });
 
 Deno.test("renderActivityHtml omits the time element when the item has none", () => {
-  const html = renderActivityHtml([{ repo: "dtinth/claw", issue: 5, excerpt: "x" }], NOW);
+  const html = renderActivityHtml(
+    [{ repo: "dtinth/claw", issue: 5, commentId: 1, excerpt: "x" }],
+    NOW,
+  );
   assertEquals(html.includes("<time"), false);
 });
 
-Deno.test("renderActivityHtml marks a prominent item distinctly", () => {
+Deno.test("renderActivityHtml marks a prominent item distinctly and tags it for client-side read tracking", () => {
   const html = renderActivityHtml(
-    [{ repo: "dtinth/claw", issue: 5, excerpt: "@dtinth ping", prominent: true }],
+    [{ repo: "dtinth/claw", issue: 5, commentId: 42, excerpt: "@dtinth ping", prominent: true }],
     NOW,
   );
   assertStringIncludes(html, 'class="prominent"');
   assertStringIncludes(html, 'class="excerpt prominent"');
+  assertStringIncludes(html, 'data-repo="dtinth/claw"');
+  assertStringIncludes(html, 'data-issue="5"');
+  assertStringIncludes(html, 'data-comment-id="42"');
 });
 
-Deno.test("renderActivityHtml does not mark a non-prominent item", () => {
-  const html = renderActivityHtml([{ repo: "dtinth/claw", issue: 5, excerpt: "routine" }], NOW);
+Deno.test("renderActivityHtml does not mark a non-prominent item, nor tag it with read-tracking data", () => {
+  const html = renderActivityHtml(
+    [{ repo: "dtinth/claw", issue: 5, commentId: 1, excerpt: "routine" }],
+    NOW,
+  );
   assertEquals(html.includes("prominent"), false);
+  assertEquals(html.includes("data-comment-id"), false);
 });
 
 Deno.test("renderActivityHtml escapes the repo and excerpt (defense in depth)", () => {
   const html = renderActivityHtml(
-    [{ repo: "<script>alert(1)</script>/x", issue: 5, excerpt: "<script>alert(2)</script>" }],
+    [{
+      repo: "<script>alert(1)</script>/x",
+      issue: 5,
+      commentId: 1,
+      excerpt: "<script>alert(2)</script>",
+    }],
     NOW,
   );
   assertEquals(html.includes("<script>alert(1)</script>"), false);
@@ -205,4 +225,12 @@ Deno.test("sidebarHtml loads immediately on render, not just on the first interv
   const html = sidebarHtml();
   const scriptBody = html.slice(html.indexOf("<script>"));
   assertStringIncludes(scriptBody.slice(0, scriptBody.indexOf("setInterval")), "load();");
+});
+
+Deno.test("sidebarHtml applies client-side read state and offers a mark-as-unread control", () => {
+  const html = sidebarHtml();
+  assertStringIncludes(html, "claw-read:");
+  assertStringIncludes(html, "data-comment-id");
+  assertStringIncludes(html, "Mark as unread");
+  assertStringIncludes(html, "applyReadState");
 });
