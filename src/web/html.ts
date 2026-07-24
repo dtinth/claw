@@ -33,7 +33,22 @@ const STYLE = `
   * { box-sizing: border-box; }
   body {
     font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
-    max-width: 780px; margin: 0 auto; padding: 1.5rem;
+    margin: 0;
+  }
+  .app-shell { display: flex; align-items: flex-start; }
+  .app-sidebar {
+    flex: 0 0 16rem; box-sizing: border-box; border-right: 1px solid #8884;
+    padding: 1rem; position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  }
+  .app-main { flex: 1; min-width: 0; }
+  .page { max-width: 780px; margin: 0 auto; padding: 1.5rem; }
+  @media (max-width: 700px) {
+    .app-shell { flex-direction: column; }
+    .app-sidebar {
+      flex: none; width: 100%; height: auto; position: static;
+      border-right: none; border-bottom: 1px solid #8884; order: 2;
+    }
+    .app-main { order: 1; }
   }
   header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
   h1 { font-size: 1.4rem; margin: 0 0 .25rem; }
@@ -73,10 +88,39 @@ const STYLE = `
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .copy-row button { flex: none; }
+  .app-sidebar h3 { margin: 0 0 .5rem; font-size: 1rem; }
+  .sidebar-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .7rem; }
+  .sidebar-list li { font-size: .85rem; overflow-wrap: anywhere; }
+  .sidebar-list li.prominent {
+    border-left: 3px solid #d97706; padding-left: .5rem; margin-left: -.5rem;
+  }
+  .sidebar-list time { display: block; color: gray; font-size: .75rem; }
+  .sidebar-list .excerpt {
+    margin: .2rem 0 0; color: gray;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .sidebar-list .excerpt.prominent { color: inherit; font-weight: 600; }
 `;
 
-/** Wrap page content in the standard document shell. */
-export function layout(title: string, body: string): string {
+/**
+ * Wrap page content in the standard document shell. When `sidebar` is given
+ * (HTML for the dashboard's "recent bot activity" panel), it's rendered as a
+ * sticky left rail that's part of the shell itself — present on every
+ * logged-in page, not just one — via a single `.app-shell` flex row; without
+ * it, the page renders as a plain single column like before.
+ */
+export function layout(title: string, body: string, sidebar?: string): string {
+  const page = `
+<header>
+  <h1><a href="/">🐾 claw</a></h1>
+</header>
+${body}`;
+  const shellBody = sidebar
+    ? `<div class="app-shell">
+  <aside class="app-sidebar">${sidebar}</aside>
+  <div class="app-main"><div class="page">${page}</div></div>
+</div>`
+    : `<div class="page">${page}</div>`;
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -86,10 +130,7 @@ export function layout(title: string, body: string): string {
 <style>${STYLE}</style>
 </head>
 <body>
-<header>
-  <h1><a href="/">🐾 claw</a></h1>
-</header>
-${body}
+${shellBody}
 </body>
 </html>`;
 }

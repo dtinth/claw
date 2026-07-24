@@ -62,6 +62,7 @@ function fakeGrist(overrides: Partial<GristClient> = {}): GristClient {
   return {
     upsertComment: () => Promise.resolve(),
     queryComments: () => Promise.resolve([]),
+    listActivity: () => Promise.resolve([]),
     ...overrides,
   };
 }
@@ -127,6 +128,67 @@ Deno.test("dashboard offers one-click permission presets", async () => {
   assertStringIncludes(html, "Read-only");
   assertStringIncludes(html, "Coding agent");
   assertStringIncludes(html, "var presets ="); // the applier script
+});
+
+Deno.test("dashboard shows the activity sidebar when the comment relay is configured", async () => {
+  const res = await makeApp(fakeGitHub(), { grist: fakeGrist() }).request("/", {
+    headers: { cookie: await sessionCookie() },
+  });
+  const html = await res.text();
+  assertStringIncludes(html, 'class="app-sidebar"');
+  assertStringIncludes(html, "/api/sidebar-activity");
+});
+
+Deno.test("dashboard has no sidebar when the comment relay is not configured", async () => {
+  const res = await makeApp(fakeGitHub()).request("/", {
+    headers: { cookie: await sessionCookie() },
+  });
+  const html = await res.text();
+  assertEquals(html.includes('class="app-sidebar"'), false);
+});
+
+Deno.test("GET /api/sidebar-activity redirects to login when logged out", async () => {
+  const res = await makeApp(fakeGitHub(), { grist: fakeGrist() }).request(
+    "/api/sidebar-activity",
+    { redirect: "manual" },
+  );
+  assertEquals(res.status, 302);
+  assertEquals(res.headers.get("location"), "/auth/login");
+});
+
+Deno.test("GET /api/sidebar-activity returns the grouped, rendered activity list", async () => {
+  let receivedQuery: { authors: string[]; limit: number } | null = null;
+  const grist = fakeGrist({
+    listActivity: (q) => {
+      receivedQuery = q;
+      return Promise.resolve([
+        {
+          commentId: 1,
+          repo: "dtinth/claw",
+          issue: 5,
+          author: "dtinth-claw[bot]",
+          authorId: 1,
+          body: "hi",
+          time: 1709294400,
+          url: "https://github.com/dtinth/claw/issues/5#issuecomment-1",
+        },
+      ]);
+    },
+  });
+  const res = await makeApp(fakeGitHub(), { grist }).request("/api/sidebar-activity", {
+    headers: { cookie: await sessionCookie() },
+  });
+  assertEquals(res.status, 200);
+  const html = await res.text();
+  assertStringIncludes(html, 'href="/dtinth/claw/issues/5"');
+  assertEquals(receivedQuery, { authors: ["dtinth-claw[bot]", "dtinth"], limit: 400 });
+});
+
+Deno.test("GET /api/sidebar-activity returns 503 when the relay is not configured", async () => {
+  const res = await makeApp(fakeGitHub()).request("/api/sidebar-activity", {
+    headers: { cookie: await sessionCookie() },
+  });
+  assertEquals(res.status, 503);
 });
 
 Deno.test("a session for a different login is not accepted", async () => {
@@ -263,6 +325,14 @@ Deno.test("GET /draft renders a prefilled, escaped form when logged in", async (
   assertStringIncludes(html, "issue #5");
   assertStringIncludes(html, "&lt;script&gt;"); // body escaped, not executed
   assertStringIncludes(html, "Post as me");
+});
+
+Deno.test("GET /draft shows the sidebar too — it's app-shell chrome, not dashboard-only", async () => {
+  const res = await makeApp(fakeGitHub(), { grist: fakeGrist() }).request(
+    "/draft?repo=dtinth/claw&issue=5",
+    { headers: { cookie: await sessionCookie() } },
+  );
+  assertStringIncludes(await res.text(), 'class="app-sidebar"');
 });
 
 Deno.test("GET /draft includes client-side draft-persistence script keyed to this thread", async () => {

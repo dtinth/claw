@@ -137,6 +137,58 @@ Deno.test("queryComments adds issue and author filters when provided", async () 
   assertEquals(filter, { Repo: ["o/r"], Issue: [42], User_Name: ["dtinth", "alice"] });
 });
 
+Deno.test("listActivity filters by authors, sorts by -Time, and applies the limit", async () => {
+  const { fn, calls } = fakeFetch(() =>
+    json({
+      records: [{
+        id: 1,
+        fields: {
+          Comment_ID: 9,
+          Repo: "dtinth/claw",
+          Issue: 5,
+          Body: "hi",
+          User_ID: 1,
+          User_Name: "dtinth-claw[bot]",
+          Time: 1719800000,
+        },
+      }],
+    })
+  );
+  const client = createGristClient({ ...DEPS, fetch: fn });
+
+  const comments = await client.listActivity({
+    authors: ["dtinth-claw[bot]", "dtinth"],
+    limit: 20,
+  });
+
+  assertEquals(comments, [{
+    commentId: 9,
+    repo: "dtinth/claw",
+    issue: 5,
+    author: "dtinth-claw[bot]",
+    authorId: 1,
+    body: "hi",
+    time: 1719800000,
+    url: "https://github.com/dtinth/claw/issues/5#issuecomment-9",
+  }]);
+
+  const url = new URL(calls[0]!.url);
+  assertEquals(JSON.parse(url.searchParams.get("filter")!), {
+    User_Name: ["dtinth-claw[bot]", "dtinth"],
+  });
+  assertEquals(url.searchParams.get("sort"), "-Time");
+  assertEquals(url.searchParams.get("limit"), "20");
+});
+
+Deno.test("listActivity throws GristApiError on a failure response", async () => {
+  const { fn } = fakeFetch(() => json({ error: "nope" }, 500));
+  const client = createGristClient({ ...DEPS, fetch: fn });
+  await assertRejects(
+    () => client.listActivity({ authors: ["dtinth-claw[bot]"], limit: 20 }),
+    GristApiError,
+  );
+});
+
 Deno.test("upsertComment throws GristApiError on a failure response", async () => {
   const { fn } = fakeFetch(() => json({ error: "nope" }, 403));
   const client = createGristClient({ ...DEPS, fetch: fn });

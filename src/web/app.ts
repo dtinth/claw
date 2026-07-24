@@ -19,6 +19,14 @@ import { GitHubApiError, type GitHubClient } from "../github/client.ts";
 import { formatRepo, parseRepo, RepoParseError } from "../github/repo.ts";
 import type { CommentQuery, GristClient } from "../grist/client.ts";
 import { issuePage, renderCommentsHtml } from "./comment_feed.ts";
+import {
+  ACTIVITY_AUTHOR,
+  ACTIVITY_FETCH_LIMIT,
+  ACTIVITY_MAX_ITEMS,
+  groupLatestActivity,
+  renderActivityHtml,
+  sidebarHtml,
+} from "./sidebar.ts";
 import { InvalidFilenameError, type UploadService } from "../storage/upload.ts";
 import { parseIssueCommentEvent, verifyWebhookSignature } from "../webhook.ts";
 import { type ClawGrant, ClawJwtError, createClawJwt, verifyClawJwt } from "../jwt.ts";
@@ -58,6 +66,10 @@ function randomToken(): string {
 
 export function createApp(deps: AppDeps) {
   const { config, github, grist, uploads } = deps;
+  // The sidebar's own data is loaded async by its script, so this is just a
+  // static skeleton — safe to build once and hand to every session-gated
+  // layout() call, never to a logged-out one.
+  const sidebarForSession = grist ? sidebarHtml() : undefined;
   const secure = config.baseUrl.startsWith("https://");
   const redirectUri = `${config.baseUrl}/auth/callback`;
 
@@ -153,8 +165,29 @@ export function createApp(deps: AppDeps) {
       ));
     }
     return c.html(
-      layout("claw — dashboard", dashboard(session, config.allowedLogin, config.baseUrl)),
+      layout(
+        "claw — dashboard",
+        dashboard(session, config.allowedLogin, config.baseUrl),
+        sidebarForSession,
+      ),
     );
+  });
+
+  // --- browser: dashboard's "recent bot activity" sidebar, loaded via JS --
+
+  app.use("/api/sidebar-activity", requireSession);
+  app.get("/api/sidebar-activity", async (c) => {
+    if (!grist) return c.text("comment relay is not configured", 503);
+    const rows = await grist.listActivity({
+      authors: [ACTIVITY_AUTHOR, config.allowedLogin],
+      limit: ACTIVITY_FETCH_LIMIT,
+    });
+    const items = groupLatestActivity(rows, {
+      botAuthor: ACTIVITY_AUTHOR,
+      humanAuthor: config.allowedLogin,
+      maxItems: ACTIVITY_MAX_ITEMS,
+    });
+    return c.html(renderActivityHtml(items, new Date()));
   });
 
   // --- auth ---------------------------------------------------------------
@@ -278,6 +311,7 @@ export function createApp(deps: AppDeps) {
         layout(
           "claw — token minted",
           mintedTokenPage(jwt, repo, permissions, ttlSeconds, config.baseUrl),
+          sidebarForSession,
         ),
       );
     } catch (error) {
@@ -285,6 +319,7 @@ export function createApp(deps: AppDeps) {
         layout(
           "claw — mint failed",
           errorBlock(error instanceof Error ? error.message : String(error)) + backLink(),
+          sidebarForSession,
         ),
         400,
       );
@@ -433,7 +468,10 @@ export function createApp(deps: AppDeps) {
       repo = formatRepo(parseRepo(`${c.req.param("owner")}/${c.req.param("repo")}`));
     } catch (error) {
       const message = error instanceof RepoParseError ? error.message : "invalid repository";
-      return c.html(layout("claw — not found", errorBlock(message) + backLink()), 400);
+      return c.html(
+        layout("claw — not found", errorBlock(message) + backLink(), sidebarForSession),
+        400,
+      );
     }
     const issue = Number(c.req.param("number"));
     if (!Number.isInteger(issue) || issue <= 0) {
@@ -441,6 +479,7 @@ export function createApp(deps: AppDeps) {
         layout(
           "claw — not found",
           errorBlock("issue/PR number must be a positive integer") + backLink(),
+          sidebarForSession,
         ),
         400,
       );
@@ -448,15 +487,22 @@ export function createApp(deps: AppDeps) {
     const partial = c.req.query("partial") !== undefined;
     if (!grist) {
       const message = "comment relay is not configured";
-      return partial
-        ? c.text(message, 503)
-        : c.html(layout("claw — not configured", errorBlock(message) + backLink()), 503);
+      return partial ? c.text(message, 503) : c.html(
+        layout("claw — not configured", errorBlock(message) + backLink(), sidebarForSession),
+        503,
+      );
     }
 
     const comments = await grist.queryComments({ repo, issue });
     const commentsHtml = renderCommentsHtml(comments);
     if (partial) return c.html(commentsHtml);
-    return c.html(layout(`claw — ${repo}#${issue}`, issuePage({ repo, issue, commentsHtml })));
+    return c.html(
+      layout(
+        `claw — ${repo}#${issue}`,
+        issuePage({ repo, issue, commentsHtml }),
+        sidebarForSession,
+      ),
+    );
   }
   app.get("/:owner/:repo/issues/:number", issueFeedHandler);
   app.get("/:owner/:repo/pull/:number", issueFeedHandler);
@@ -466,9 +512,12 @@ export function createApp(deps: AppDeps) {
   app.get("/draft", (c) => {
     const parsed = parseDraftParams(new URL(c.req.url).searchParams);
     if ("error" in parsed) {
-      return c.html(layout("claw — draft", errorBlock(parsed.error) + backLink()), 400);
+      return c.html(
+        layout("claw — draft", errorBlock(parsed.error) + backLink(), sidebarForSession),
+        400,
+      );
     }
-    return c.html(layout("claw — new comment", draftFormPage(parsed.value)));
+    return c.html(layout("claw — new comment", draftFormPage(parsed.value), sidebarForSession));
   });
 
   app.post("/draft", async (c) => {
@@ -476,12 +525,19 @@ export function createApp(deps: AppDeps) {
     const form = await c.req.parseBody();
     const parsed = parseDraftParams(formToParams(form));
     if ("error" in parsed) {
-      return c.html(layout("claw — draft", errorBlock(parsed.error) + backLink()), 400);
+      return c.html(
+        layout("claw — draft", errorBlock(parsed.error) + backLink(), sidebarForSession),
+        400,
+      );
     }
     const { repo, target, body } = parsed.value;
     if (body.trim() === "") {
       return c.html(
-        layout("claw — draft", errorBlock("comment body must not be empty") + backLink()),
+        layout(
+          "claw — draft",
+          errorBlock("comment body must not be empty") + backLink(),
+          sidebarForSession,
+        ),
         400,
       );
     }
@@ -504,7 +560,9 @@ export function createApp(deps: AppDeps) {
           target.replyToId,
         )).url;
       }
-      return c.html(layout("claw — posted", postedPage(postedUrl, repo, target)));
+      return c.html(
+        layout("claw — posted", postedPage(postedUrl, repo, target), sidebarForSession),
+      );
     } catch (error) {
       console.error(`claw: failed to post comment to ${repo} (${target.kind})`, error);
       // A GitHub 401 almost always means the user-to-server token has expired
@@ -517,6 +575,9 @@ export function createApp(deps: AppDeps) {
             "claw — session expired",
             errorBlock("Your GitHub session has expired. Log in again, then retry the post.") +
               `<p><a href="/auth/login"><button>Log in with GitHub</button></a></p>`,
+            // No sidebar here — the session cookie was just cleared, and the
+            // sidebar's own fetch is session-gated too, so it would only
+            // dump the login page's HTML into the list.
           ),
           // NB: not 502/504 — Cloudflare replaces those bodies with its own page.
           200,
@@ -531,7 +592,7 @@ export function createApp(deps: AppDeps) {
           "Grant it in the app settings, re-authorize the new permission, then log in again.";
       }
       return c.html(
-        layout("claw — post failed", errorBlock(message) + backLink()),
+        layout("claw — post failed", errorBlock(message) + backLink(), sidebarForSession),
         200,
       );
     }

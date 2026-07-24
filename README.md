@@ -116,6 +116,23 @@ fragment request) so new comments show up without a reload, and a
 comment. It's read-only — reply via `/draft`, linked from both the top and
 the bottom of the thread.
 
+### 6. Dashboard sidebar: recent bot activity
+
+Every logged-in page shows a sticky left sidebar (part of the shared page
+shell, not just the dashboard) listing the issues/PRs the coding-agent bot
+(`dtinth-claw[bot]`, hardcoded — not an env var yet) has most recently
+commented on, across every repo the relay has seen — grouped to one entry
+per issue, newest first, relative timestamps, linking to feature 5's comment
+feed. Its data loads asynchronously (`GET /api/sidebar-activity`, session-gated)
+so it never blocks the rest of the page, and it polls itself every 15s while
+its tab is visible.
+
+If a bot comment `@`-mentions you, the entry's excerpt starts at that
+mention and is shown prominently (an orange accent, bold text) — unless
+you've since posted a newer comment on the same issue, in which case it's
+treated as already handled and shown like any other entry. Requires the
+comment relay (feature 3) to be configured; absent otherwise.
+
 ## Configuration
 
 All configuration comes from environment variables:

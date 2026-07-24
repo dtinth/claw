@@ -9,7 +9,7 @@ import type { Comment } from "../grist/client.ts";
 import { escapeHtml } from "./html.ts";
 
 /** `2024-03-01 12:00 UTC` — fixed to UTC since this renders server-side, with no visitor timezone to use. */
-function formatTime(epochSeconds: number): string {
+export function formatTime(epochSeconds: number): string {
   return new Date(epochSeconds * 1000).toISOString()
     .replace("T", " ").replace(/:\d{2}\.\d{3}Z$/, " UTC");
 }

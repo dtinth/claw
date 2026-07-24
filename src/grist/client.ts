@@ -46,10 +46,20 @@ export interface GristClientDeps {
   fetch?: typeof fetch;
 }
 
+/** Filter for {@link GristClient.listActivity}. */
+export interface ActivityQuery {
+  /** Restrict to these comment authors (GitHub logins), across all repos. */
+  authors: string[];
+  /** Cap the number of rows Grist returns (most recent first). */
+  limit: number;
+}
+
 /** claw's Grist client surface. */
 export interface GristClient {
   upsertComment(record: CommentRecord): Promise<void>;
   queryComments(query: CommentQuery): Promise<Comment[]>;
+  /** The `authors`' most recent comments across all repos, newest first. */
+  listActivity(query: ActivityQuery): Promise<Comment[]>;
 }
 
 /** Thrown when a Grist API call fails. */
@@ -94,6 +104,19 @@ export function createGristClient(deps: GristClientDeps): GristClient {
     );
   }
 
+  function mapRow({ fields: f }: GristRow): Comment {
+    return {
+      commentId: f.Comment_ID,
+      repo: f.Repo,
+      issue: f.Issue,
+      author: f.User_Name,
+      authorId: f.User_ID,
+      body: f.Body,
+      ...(typeof f.Time === "number" ? { time: f.Time } : {}),
+      url: `https://github.com/${f.Repo}/issues/${f.Issue}#issuecomment-${f.Comment_ID}`,
+    };
+  }
+
   return {
     async upsertComment(record) {
       const { Comment_ID, ...fields } = record;
@@ -118,16 +141,20 @@ export function createGristClient(deps: GristClientDeps): GristClient {
       if (!response.ok) await fail(response, "query");
 
       const payload = await response.json() as { records: GristRow[] };
-      return payload.records.map(({ fields: f }) => ({
-        commentId: f.Comment_ID,
-        repo: f.Repo,
-        issue: f.Issue,
-        author: f.User_Name,
-        authorId: f.User_ID,
-        body: f.Body,
-        ...(typeof f.Time === "number" ? { time: f.Time } : {}),
-        url: `https://github.com/${f.Repo}/issues/${f.Issue}#issuecomment-${f.Comment_ID}`,
-      }));
+      return payload.records.map(mapRow);
+    },
+
+    async listActivity({ authors, limit }) {
+      const url = new URL(recordsUrl);
+      url.searchParams.set("filter", JSON.stringify({ User_Name: authors }));
+      url.searchParams.set("sort", "-Time");
+      url.searchParams.set("limit", String(limit));
+
+      const response = await fetchFn(url.toString(), { headers });
+      if (!response.ok) await fail(response, "query");
+
+      const payload = await response.json() as { records: GristRow[] };
+      return payload.records.map(mapRow);
     },
   };
 }
