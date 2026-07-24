@@ -114,9 +114,10 @@ interface UsageGristRow {
     Row_Kind: string;
     Updated: number;
     FiveHourPct: number;
-    FiveHourResetsAt: string;
+    /** A native Grist DateTime column: read back as epoch seconds (possibly fractional), not the ISO string it was written with. */
+    FiveHourResetsAt: number;
     WeeklyPct: number;
-    WeeklyResetsAt: string;
+    WeeklyResetsAt: number;
     ExtraUsageEnabled?: boolean;
     ExtraUsagePct?: number;
   };
@@ -126,9 +127,9 @@ function mapUsageRow({ fields: f }: UsageGristRow): UsageSnapshot {
   return {
     updated: f.Updated,
     fiveHourPct: f.FiveHourPct,
-    fiveHourResetsAt: f.FiveHourResetsAt,
+    fiveHourResetsAt: new Date(f.FiveHourResetsAt * 1000).toISOString(),
     weeklyPct: f.WeeklyPct,
-    weeklyResetsAt: f.WeeklyResetsAt,
+    weeklyResetsAt: new Date(f.WeeklyResetsAt * 1000).toISOString(),
     ...(typeof f.ExtraUsageEnabled === "boolean" ? { extraUsageEnabled: f.ExtraUsageEnabled } : {}),
     ...(typeof f.ExtraUsagePct === "number" ? { extraUsagePct: f.ExtraUsagePct } : {}),
   };

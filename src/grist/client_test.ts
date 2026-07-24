@@ -236,6 +236,9 @@ Deno.test("upsertUsage throws GristApiError on a failure response", async () => 
   await assertRejects(() => client.upsertUsage(SAMPLE_SNAPSHOT), GristApiError);
 });
 
+const FIVE_HOUR_RESETS_EPOCH = Date.parse(SAMPLE_SNAPSHOT.fiveHourResetsAt) / 1000;
+const WEEKLY_RESETS_EPOCH = Date.parse(SAMPLE_SNAPSHOT.weeklyResetsAt) / 1000;
+
 Deno.test("getUsage returns the single current row", async () => {
   const { fn, calls } = fakeFetch(() =>
     json({
@@ -245,9 +248,9 @@ Deno.test("getUsage returns the single current row", async () => {
           Row_Kind: "current",
           Updated: 1719900000,
           FiveHourPct: 68,
-          FiveHourResetsAt: "2026-07-24T18:30:00Z",
+          FiveHourResetsAt: FIVE_HOUR_RESETS_EPOCH,
           WeeklyPct: 31,
-          WeeklyResetsAt: "2026-07-28T00:00:00Z",
+          WeeklyResetsAt: WEEKLY_RESETS_EPOCH,
         },
       }],
     })
@@ -256,9 +259,39 @@ Deno.test("getUsage returns the single current row", async () => {
 
   const usage = await client.getUsage();
 
-  assertEquals(usage, SAMPLE_SNAPSHOT);
+  assertEquals(usage, {
+    ...SAMPLE_SNAPSHOT,
+    fiveHourResetsAt: new Date(FIVE_HOUR_RESETS_EPOCH * 1000).toISOString(),
+    weeklyResetsAt: new Date(WEEKLY_RESETS_EPOCH * 1000).toISOString(),
+  });
   const filter = new URL(calls[0]!.url).searchParams.get("filter")!;
   assertEquals(JSON.parse(filter), { Row_Kind: ["current"] });
+});
+
+Deno.test("getUsage converts Grist's epoch-seconds DateTime columns to ISO strings (regression)", async () => {
+  // Exact values from a real Grist row: DateTime columns read back as
+  // fractional epoch seconds, not the ISO string `upsertUsage` wrote.
+  const { fn } = fakeFetch(() =>
+    json({
+      records: [{
+        id: 2,
+        fields: {
+          Row_Kind: "current",
+          Updated: 1784904190,
+          FiveHourPct: 88,
+          FiveHourResetsAt: 1784905199.65325,
+          WeeklyPct: 81,
+          WeeklyResetsAt: 1785020399.653271,
+        },
+      }],
+    })
+  );
+  const client = createGristClient({ ...DEPS, fetch: fn });
+
+  const usage = await client.getUsage();
+
+  assertEquals(usage?.fiveHourResetsAt, new Date(1784905199.65325 * 1000).toISOString());
+  assertEquals(usage?.weeklyResetsAt, new Date(1785020399.653271 * 1000).toISOString());
 });
 
 Deno.test("getUsage returns null when there is no row yet", async () => {
@@ -287,9 +320,9 @@ function SAMPLE_SNAPSHOT_FIELDS() {
     Row_Kind: "current",
     Updated: SAMPLE_SNAPSHOT.updated,
     FiveHourPct: SAMPLE_SNAPSHOT.fiveHourPct,
-    FiveHourResetsAt: SAMPLE_SNAPSHOT.fiveHourResetsAt,
+    FiveHourResetsAt: FIVE_HOUR_RESETS_EPOCH,
     WeeklyPct: SAMPLE_SNAPSHOT.weeklyPct,
-    WeeklyResetsAt: SAMPLE_SNAPSHOT.weeklyResetsAt,
+    WeeklyResetsAt: WEEKLY_RESETS_EPOCH,
   };
 }
 
