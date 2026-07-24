@@ -478,6 +478,16 @@ Deno.test("GET /draft lets Cmd/Ctrl+Enter submit the form", async () => {
   assertStringIncludes(html, "fetch(form.action");
 });
 
+Deno.test("GET /draft disables the submit button while a submission is in flight", async () => {
+  const res = await makeApp(fakeGitHub()).request(
+    "/draft?repo=dtinth/claw&issue=5",
+    { headers: { cookie: await sessionCookie() } },
+  );
+  const html = await res.text();
+  assertStringIncludes(html, 'id="submit-btn"');
+  assertStringIncludes(html, "submitBtn.disabled = true");
+});
+
 Deno.test("GET /draft shows the sidebar too — it's app-shell chrome, not dashboard-only", async () => {
   const res = await makeApp(fakeGitHub(), { grist: fakeGrist() }).request(
     "/draft?repo=dtinth/claw&issue=5",

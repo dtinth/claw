@@ -892,29 +892,44 @@ function draftFormPage(draft: DraftInput): string {
     <input type="hidden" name="replyTo" value="${escapeHtml(replyTo)}">
     <label for="body">Comment</label>
     <textarea id="body" name="body" required>${escapeHtml(body)}</textarea>
-    <p><button type="submit">Post as me</button> <span class="muted">(or ⌘/Ctrl + Enter)</span></p>
+    <p><button type="submit" id="submit-btn">Post as me</button> <span class="muted">(or ⌘/Ctrl + Enter)</span></p>
   </form>
   ${backLink()}
   <script>
 (function () {
   var key = ${jsonForScript(draftStorageKey(repo, target))};
   var textarea = document.getElementById("body");
+  var form = textarea.form;
+  var submitBtn = document.getElementById("submit-btn");
+
+  function doSubmit() {
+    submitBtn.disabled = true;
+    submitBtn.textContent = "Posting…";
+    // Submitting via fetch (rather than requestSubmit()/submit()) sidesteps
+    // iPadOS Safari treating a programmatic form submission made while Cmd
+    // is still down as a Cmd-click and opening a new tab.
+    fetch(form.action, { method: "POST", body: new FormData(form) })
+      .then(function (res) { return res.text(); })
+      .then(function (html) {
+        document.open();
+        document.write(html);
+        document.close();
+      })
+      .catch(function () {
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Post as me";
+        form.submit();
+      });
+  }
+
+  form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    doSubmit();
+  });
   textarea.addEventListener("keydown", function (e) {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
-      // Both requestSubmit() and submit() get treated as a Cmd-click by
-      // iPadOS Safari while Cmd is still down, opening a new tab. Submitting
-      // via fetch instead sidesteps the browser's native form-submission
-      // navigation entirely, so there's nothing for Safari to misinterpret.
-      var form = textarea.form;
-      fetch(form.action, { method: "POST", body: new FormData(form) })
-        .then(function (res) { return res.text(); })
-        .then(function (html) {
-          document.open();
-          document.write(html);
-          document.close();
-        })
-        .catch(function () { form.submit(); });
+      doSubmit();
     }
   });
   try {
