@@ -475,7 +475,7 @@ Deno.test("GET /draft lets Cmd/Ctrl+Enter submit the form", async () => {
   const html = await res.text();
   assertStringIncludes(html, "metaKey");
   assertStringIncludes(html, "ctrlKey");
-  assertStringIncludes(html, "textarea.form.submit()");
+  assertStringIncludes(html, "fetch(form.action");
 });
 
 Deno.test("GET /draft shows the sidebar too — it's app-shell chrome, not dashboard-only", async () => {

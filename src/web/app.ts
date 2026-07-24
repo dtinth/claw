@@ -902,11 +902,19 @@ function draftFormPage(draft: DraftInput): string {
   textarea.addEventListener("keydown", function (e) {
     if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
       e.preventDefault();
-      // Safari (notably iPadOS) treats requestSubmit() called while Cmd is
-      // still down as a Cmd-click and opens the result in a new tab.
-      // form.submit() doesn't have that behavior (it also skips the
-      // "submit" event and constraint validation, which is fine here).
-      textarea.form.submit();
+      // Both requestSubmit() and submit() get treated as a Cmd-click by
+      // iPadOS Safari while Cmd is still down, opening a new tab. Submitting
+      // via fetch instead sidesteps the browser's native form-submission
+      // navigation entirely, so there's nothing for Safari to misinterpret.
+      var form = textarea.form;
+      fetch(form.action, { method: "POST", body: new FormData(form) })
+        .then(function (res) { return res.text(); })
+        .then(function (html) {
+          document.open();
+          document.write(html);
+          document.close();
+        })
+        .catch(function () { form.submit(); });
     }
   });
   try {
