@@ -57,16 +57,34 @@ export function renderCommentsHtml(comments: Comment[]): string {
 
 const PAGE_STYLE = `
   ${GFM_CSS}
-  .comment-card { border: 1px solid #8884; border-radius: 8px; padding: .8rem 1rem; margin: .8rem 0; }
+  /* Pin GFM's rendering to the dt.in.th warm-dark palette instead of its
+     own GitHub dark theme (see html.ts's :root tokens for the source). */
+  [data-color-mode=dark][data-dark-theme=dark] {
+    --color-fg-default: #e9e8e7;
+    --color-fg-muted: #8b8685;
+    --color-canvas-default: #353433;
+    --color-canvas-subtle: #090807;
+    --color-border-default: #656463;
+    --color-border-muted: #454443;
+    --color-accent-fg: #ffffbb;
+    --color-accent-emphasis: #d7fc70;
+    --color-danger-fg: #fca5a5;
+  }
+  .markdown-body { font-family: var(--font-sans); }
+  .markdown-body code, .markdown-body pre { font-family: var(--font-mono); }
+  .comment-card {
+    border: 1px solid var(--border-weak); border-radius: var(--radius-lg);
+    padding: .8rem 1rem; margin: .8rem 0; background: var(--bg-base); box-shadow: var(--shadow-offset);
+  }
   .comment-meta { margin: 0 0 .5rem; }
   .comment-card pre { position: relative; }
   .copy-code-btn {
     position: absolute; top: .4rem; right: .4rem;
     font-size: .7rem; padding: .15rem .5rem; line-height: 1.4;
-    border-radius: 4px; border: 1px solid #8884; background: #8881;
-    color: inherit; cursor: pointer;
+    border-radius: var(--radius-sm); border: 1px solid var(--border-base);
+    background: var(--bg-elev); color: var(--fg-primary); cursor: pointer;
   }
-  .copy-code-btn:hover { background: #8883; }
+  .copy-code-btn:hover { border-color: var(--border-strong); }
   .copy-md-btn {
     border: none; background: transparent; cursor: pointer;
     font-size: .85rem; line-height: 1; padding: 0 .2rem; vertical-align: middle;
@@ -95,7 +113,7 @@ export function issuePage(params: IssuePageParams): string {
   return `
   <style>${PAGE_STYLE}</style>
   <p>${replyLink} · <a href="#comments-end">Jump to latest ↓</a></p>
-  <div id="comments" data-color-mode="auto" data-light-theme="light" data-dark-theme="dark"
+  <div id="comments" data-color-mode="dark" data-dark-theme="dark"
     class="markdown-body">${params.commentsHtml}</div>
   <div id="comments-end"></div>
   <p>${replyLink}</p>
