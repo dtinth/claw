@@ -108,7 +108,13 @@ const STYLE = `
     font: 400 14px var(--font-sans);
   }
   input::placeholder, textarea::placeholder { color: var(--fg-muted); }
-  textarea { min-height: 8rem; }
+  /* Match the comment-card body's typography (GFM's .markdown-body:
+     font-size 16px, line-height 1.5), so typing a reply doesn't visually
+     jar against the comment you're replying to. Letter-spacing is set
+     explicitly (not just inherited from body's .01em) because form
+     controls don't inherit it by default; 0.15px is that .01em computed
+     at body's 15px font-size. */
+  textarea { min-height: 8rem; font-size: 16px; line-height: 1.5; letter-spacing: 0.15px; }
   textarea[hidden] { display: none; }
   button, .btn-link {
     padding: .5rem .9rem; background: linear-gradient(to bottom, #454443, #151413);
