@@ -189,12 +189,12 @@ const PAGE_STYLE = `
 `;
 
 /**
- * A convention (documented in the operator's `~/.claude/CLAUDE.md`) for
- * offering one-click reply buttons: a trailing HTML comment naming short
- * reply options, invisible in the rendered comment —
+ * A convention (documented in the `dtinth-claw` skill) for offering
+ * one-click reply buttons: a trailing HTML comment naming short reply
+ * options, invisible in the rendered comment —
  * ```
  * <!--
- * Quick replies:
+ * Suggested quick replies:
  * - (A)
  * - (B)
  * -->
@@ -203,7 +203,7 @@ const PAGE_STYLE = `
  * the suggestions are stale and the caller shouldn't look for them.
  */
 export function parseQuickReplies(body: string): string[] {
-  const match = body.match(/<!--\s*Quick replies:\s*([\s\S]*?)-->/i);
+  const match = body.match(/<!--\s*Suggested quick replies:\s*([\s\S]*?)-->/i);
   if (!match) return [];
   return match[1]!
     .split("\n")

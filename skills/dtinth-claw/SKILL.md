@@ -1,13 +1,13 @@
 ---
 name: dtinth-claw
-description: dtinth's personal workflow for coding agents — voice/drafting conventions, PR-review handling, and how claw (github.com/dtinth/claw) works as this machine's GitHub identity across all projects.
-disable-model-invocation: true
+description: dtinth's personal workflow for coding agents on this machine — drafting comments/PRs in his voice, handling automated PR review findings, and everything about how claw (github.com/dtinth/claw) works: git/gh auth via claw exec, watching for replies via claw monitor, uploading files, and the quick-replies convention. Use when drafting something dtinth will post, handling a Copilot/review-bot finding, or running git/gh/claw commands on this machine.
 ---
 
 # dtinth's workflow
 
-Invoked manually at the start of a session — not project-specific to the claw repo itself, even
-though it lives here.
+Normally invoked manually (`/dtinth-claw`) at the start of a session; also invoke it directly
+yourself (e.g. after a context compaction) if this guidance appears to have been forgotten. Not
+project-specific to the claw repo itself, even though it lives here.
 
 ## Presenting drafts for me to post
 
@@ -121,29 +121,31 @@ and works for any repo with a grant — the file itself isn't tied to a specific
 where the server has upload storage configured; treat a `503`/"upload storage is not configured" as
 "this deployment doesn't have that feature enabled," not a bug to work around.
 
-## Quick replies
+## Suggested quick replies
 
 claw's dashboard comment feed (github.com/dtinth/claw) parses a trailing hidden block off the
 thread's latest comment and renders each line as a one-click button next to Reply — clicking one
 takes dtinth to the draft page with that text prefilled (not posted directly), so it's low-risk to
-over-offer these. Whenever a comment presents short, enumerable choices (e.g. "(A) or (B)?") or asks
-for a go/no-go on a recommendation, append this block at the very end of the comment body:
+over-offer these. **Suggest them liberally, on nearly every comment** — anticipate what dtinth might
+say next and offer at least two, even when the comment isn't presenting an explicit choice. Append
+this block at the very end of the comment body:
 
 ```
 <!--
-Quick replies:
+Suggested quick replies:
 - (A)
 - (B)
 -->
 ```
 
-- Each quick reply should be the _short_ form of the choice as already labeled in the comment text —
-  not a restatement or explanation.
-- If the comment includes a recommendation, add one more line: `- As you recommend`.
+- If the comment presents short, enumerable choices (e.g. "(A) or (B)?"), offer each in its short
+  form — not a restatement or explanation.
+- If the comment includes a recommendation, add `- As you recommend`.
+- If a PR was just created, suggest `- Merged.`.
+- Generic acknowledgments are fair game even for open-ended status updates: `- Noted.`, `- Thanks.`,
+  `- Acknowledged.` — always have at least two options, even when nothing more specific fits.
 - The block is invisible once rendered (an HTML comment), both on GitHub and in claw's own feed — no
   need to mention it exists in the visible text.
-- Skip this for comments that aren't asking dtinth to pick from a short set of options (status
-  updates, completion notices, open-ended questions).
 
 ## Public repos: care with anything posted
 

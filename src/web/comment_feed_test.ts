@@ -247,7 +247,7 @@ Deno.test("issuePage adds a copy button to code blocks, including after a refres
 
 Deno.test("parseQuickReplies extracts each dash-prefixed line from the marker block", () => {
   const body =
-    "Some comment text.\n\n<!--\nQuick replies:\n- (A)\n- (B)\n- As you recommend\n-->\n";
+    "Some comment text.\n\n<!--\nSuggested quick replies:\n- (A)\n- (B)\n- As you recommend\n-->\n";
   assertEquals(parseQuickReplies(body), ["(A)", "(B)", "As you recommend"]);
 });
 
@@ -256,12 +256,12 @@ Deno.test("parseQuickReplies returns an empty list when there's no marker block"
 });
 
 Deno.test("parseQuickReplies ignores non-dash lines inside the block", () => {
-  const body = "<!--\nQuick replies:\nsome stray line\n- (A)\n-->\n";
+  const body = "<!--\nSuggested quick replies:\nsome stray line\n- (A)\n-->\n";
   assertEquals(parseQuickReplies(body), ["(A)"]);
 });
 
-Deno.test("parseQuickReplies is case-insensitive on the 'Quick replies:' label", () => {
-  const body = "<!--\nquick REPLIES:\n- (A)\n-->\n";
+Deno.test("parseQuickReplies is case-insensitive on the 'Suggested quick replies:' label", () => {
+  const body = "<!--\nsuggested QUICK REPLIES:\n- (A)\n-->\n";
   assertEquals(parseQuickReplies(body), ["(A)"]);
 });
 

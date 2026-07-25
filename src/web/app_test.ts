@@ -1095,7 +1095,7 @@ Deno.test("GET /:owner/:repo/issues/:number renders quick-reply links parsed fro
           ...SAMPLE_ISSUE_COMMENT,
           commentId: 2,
           author: "dtinth-claw[bot]",
-          body: "Question text\n\n<!--\nQuick replies:\n- (A)\n- (B)\n-->\n",
+          body: "Question text\n\n<!--\nSuggested quick replies:\n- (A)\n- (B)\n-->\n",
         },
       ]),
   });
@@ -1112,7 +1112,7 @@ Deno.test("GET /:owner/:repo/issues/:number shows no quick replies when the late
   const res = await makeApp(fakeGitHub(), { grist }).request("/dtinth/claw/issues/24", {
     headers: { cookie: await sessionCookie() },
   });
-  assertEquals((await res.text()).includes("Quick replies"), false);
+  assertEquals((await res.text()).includes("Suggested quick replies"), false);
 });
 
 Deno.test("GET /:owner/:repo/pull/:number uses the same handler as /issues/:number", async () => {
