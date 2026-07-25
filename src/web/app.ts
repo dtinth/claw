@@ -594,6 +594,7 @@ export function createApp(deps: AppDeps) {
 
     try {
       let postedUrl: string;
+      let postedCommentId: number | undefined;
       if (target.kind === "issue") {
         const posted = await github.postIssueComment(
           session.accessToken,
@@ -602,6 +603,7 @@ export function createApp(deps: AppDeps) {
           body,
         );
         postedUrl = posted.htmlUrl;
+        postedCommentId = posted.commentId;
         // Optimistic — the incoming webhook will also upsert this same row
         // shortly. Doing it here too means the comment feed and sidebar
         // don't have to wait on that round-trip. Never fatal to the post
@@ -634,7 +636,11 @@ export function createApp(deps: AppDeps) {
         )).url;
       }
       return c.html(
-        layout("claw — posted", postedPage(postedUrl, repo, target), sidebarForSession),
+        layout(
+          "claw — posted",
+          postedPage(postedUrl, repo, target, postedCommentId),
+          sidebarForSession,
+        ),
       );
     } catch (error) {
       console.error(`claw: failed to post comment to ${repo} (${target.kind})`, error);
@@ -976,11 +982,17 @@ function draftFormPage(draft: DraftInput): string {
   </script>`;
 }
 
-function postedPage(postedUrl: string, repo: string, target: DraftTarget): string {
+function postedPage(
+  postedUrl: string,
+  repo: string,
+  target: DraftTarget,
+  commentId?: number,
+): string {
+  const anchor = commentId !== undefined ? `#issuecomment-${commentId}` : "";
   const viewerLink = target.kind === "issue"
     ? `<p><a href="/${
       escapeHtml(repo)
-    }/issues/${target.issueNumber}">View in claw's comment feed →</a></p>`
+    }/issues/${target.issueNumber}${anchor}">View in claw's comment feed →</a></p>`
     : "";
   return `
   <div class="card">

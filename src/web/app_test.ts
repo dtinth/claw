@@ -738,7 +738,9 @@ Deno.test("POST /draft's success page links to claw's own comment feed for an is
     body: form.toString(),
   });
   const html = await res.text();
-  assertStringIncludes(html, 'href="/dtinth/claw/issues/5"');
+  // Anchored to the just-posted comment, so you land right on it instead
+  // of having to scroll to find it.
+  assertStringIncludes(html, 'href="/dtinth/claw/issues/5#issuecomment-1"');
   assertStringIncludes(html, "localStorage.removeItem"); // clears the persisted draft on success
 });
 
