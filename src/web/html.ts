@@ -169,7 +169,7 @@ const STYLE = `
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
   .sidebar-list .excerpt.prominent { color: var(--fg-primary); font-weight: 600; }
-  .own-reply-icon { color: var(--fg-muted); }
+  .own-reply-icon { color: var(--fg-muted); vertical-align: -2px; }
   .mark-unread-icon {
     display: inline-block; background: none; border: none; cursor: pointer; color: var(--fg-muted);
     font-size: .8rem; line-height: 1; padding: 0 .2rem; vertical-align: middle;
@@ -240,6 +240,11 @@ ${body}`;
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${escapeHtml(title)}</title>
 <style>${STYLE}</style>
+${
+    sidebar
+      ? '<script async src="https://cdn.jsdelivr.net/npm/iconify-icon@2.1.0/dist/iconify-icon.min.js"></script>'
+      : ""
+  }
 </head>
 <body>
 ${shellBody}

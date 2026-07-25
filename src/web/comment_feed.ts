@@ -233,7 +233,6 @@ export function issuePage(params: IssuePageParams): string {
     .join(" ");
   return `
   <style>${PAGE_STYLE}</style>
-  <script async src="https://cdn.jsdelivr.net/npm/iconify-icon@2.1.0/dist/iconify-icon.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/morphdom@2.7.8/dist/morphdom-umd.min.js"></script>
   <p>${replyLink} <a class="btn-link" href="#comments-end">Jump to latest ↓</a></p>
   <div id="comments" data-color-mode="dark" data-dark-theme="dark"

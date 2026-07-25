@@ -152,7 +152,7 @@ export function renderActivityHtml(items: ActivityItem[], now: Date): string {
         ` data-comment-id="${item.commentId}"`
       : "";
     const ownReplyIcon = item.ownReply
-      ? `<span class="own-reply-icon" title="You already replied" aria-hidden="true">↩</span> `
+      ? `<iconify-icon class="own-reply-icon" icon="ic:baseline-reply" title="You already replied" aria-hidden="true"></iconify-icon> `
       : "";
     return `<li${liAttrs}>
       <a href="/${escapeHtml(item.repo)}/issues/${item.issue}#issuecomment-${item.commentId}">${

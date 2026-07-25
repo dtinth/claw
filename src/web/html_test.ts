@@ -46,3 +46,10 @@ Deno.test("layout has no collapse toggle when there's no sidebar", () => {
   // STYLE always defines a .sidebar-toggle CSS rule, so check for the markup, not a bare substring.
   assertEquals(html.includes('id="sidebar-toggle"'), false);
 });
+
+Deno.test("layout loads iconify-icon (for the sidebar's own-reply icon) only when a sidebar is given", () => {
+  const withSidebar = layout("t", "<p>BODY</p>", "<p>SIDEBAR</p>");
+  assertStringIncludes(withSidebar, "cdn.jsdelivr.net/npm/iconify-icon");
+  const withoutSidebar = layout("t", "<p>BODY</p>");
+  assertEquals(withoutSidebar.includes("iconify-icon"), false);
+});

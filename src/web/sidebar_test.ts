@@ -214,11 +214,11 @@ Deno.test("renderActivityHtml prefixes an own-reply item's excerpt with a reply 
     [{ repo: "dtinth/claw", issue: 5, commentId: 1, excerpt: "done, thanks", ownReply: true }],
     NOW,
   );
-  assertStringIncludes(html, 'class="own-reply-icon"');
+  assertStringIncludes(html, 'icon="ic:baseline-reply"');
   // The icon must sit right before the excerpt text, inside the same <p>.
   assertStringIncludes(
     html,
-    'own-reply-icon" title="You already replied" aria-hidden="true">↩</span> done, thanks',
+    'own-reply-icon" icon="ic:baseline-reply" title="You already replied" aria-hidden="true"></iconify-icon> done, thanks',
   );
 });
 
