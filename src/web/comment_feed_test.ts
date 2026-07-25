@@ -66,6 +66,20 @@ Deno.test("renderCommentsHtml renders markdown (GFM) in the comment body", () =>
   assertStringIncludes(html, '<a href="https://example.com"');
 });
 
+Deno.test("renderCommentsHtml opens a link in the comment body in a new tab", () => {
+  const html = renderCommentsHtml([comment({ body: "see [this](https://example.com)" })]);
+  assertStringIncludes(
+    html,
+    '<a href="https://example.com" target="_blank" rel="noopener noreferrer">',
+  );
+});
+
+Deno.test("renderCommentsHtml leaves a same-page #fragment link alone (no target=_blank)", () => {
+  const html = renderCommentsHtml([comment({ body: "see [below](#footnote-1)" })]);
+  assertStringIncludes(html, '<a href="#footnote-1">below</a>');
+  assertEquals(html.includes('href="#footnote-1" target="_blank"'), false);
+});
+
 Deno.test("renderCommentsHtml colorizes an @mention in the body the same way as its author color", () => {
   const html = renderCommentsHtml([comment({ body: "thanks @some-bot for the fix" })]);
   assertStringIncludes(html, `<span style="color:${authorColor("some-bot")}">@some-bot</span>`);

@@ -75,10 +75,22 @@ function renderCommentBody(body: string): string {
   );
 
   const html = renderMarkdown(restored);
-  return html.replace(
+  const withMentions = html.replace(
     new RegExp(`${MARK_START}M(\\d+)${MARK_END}`, "g"),
     (_m, i: string) => mentionHtml[Number(i)]!,
   );
+  return openLinksInNewTab(withMentions);
+}
+
+/**
+ * Make every link in rendered comment HTML open in a new tab. GFM's
+ * sanitizer already appends `rel="noopener noreferrer"` — but only to
+ * links that actually navigate away (a same-page `#fragment` link gets no
+ * `rel` at all), so anchoring the replacement there both targets exactly
+ * the right links and leaves in-page anchors alone.
+ */
+function openLinksInNewTab(html: string): string {
+  return html.replace(/rel="noopener noreferrer">/g, 'target="_blank" rel="noopener noreferrer">');
 }
 
 function renderComment(c: Comment): string {
