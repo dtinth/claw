@@ -132,6 +132,31 @@ Deno.test("runUsageReportLoop logs a failure and keeps polling rather than throw
   });
 });
 
+Deno.test("runUsageReportLoop logs Anthropic's actual nested error message, not '[object Object]' (regression)", async () => {
+  await withFixtures(async ({ configDir, credentialsPath }) => {
+    const fetchFn = () =>
+      Promise.resolve(
+        jsonResponse({
+          type: "error",
+          error: { type: "authentication_error", message: "token expired" },
+        }, 401),
+      );
+    const stderr: string[] = [];
+    await runUsageReportLoop({
+      intervalMs: 10_000,
+      configDir,
+      credentialsPath,
+      baseUrl: "https://claw.example.com",
+      fetch: fetchFn,
+      stderr: (t) => stderr.push(t),
+      sleep: () => Promise.resolve(),
+      shouldStop: stopAfter(1),
+    });
+    assertEquals(stderr.some((l) => l.includes("token expired")), true);
+    assertEquals(stderr.some((l) => l.includes("[object Object]")), false);
+  });
+});
+
 Deno.test("runUsageReportLoop logs and keeps polling when the credentials file is missing", async () => {
   await withFixtures(async ({ configDir }) => {
     const stderr: string[] = [];

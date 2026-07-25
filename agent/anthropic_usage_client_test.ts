@@ -79,8 +79,28 @@ Deno.test("fetchUsage throws AnthropicUsageError with the status on a 401", asyn
   const error = await assertRejects(
     () => client.fetchUsage("expired"),
     AnthropicUsageError,
+    "invalid token",
   );
   assertEquals(error.status, 401);
+});
+
+Deno.test("fetchUsage extracts the nested message from Anthropic's real error envelope (regression: was '[object Object]')", async () => {
+  const { fn } = fakeFetch(() =>
+    json({ type: "error", error: { type: "authentication_error", message: "token expired" } }, 401)
+  );
+  const client = createAnthropicUsageClient({ fetch: fn });
+  const error = await assertRejects(
+    () => client.fetchUsage("expired"),
+    AnthropicUsageError,
+    "token expired",
+  );
+  assertEquals(error.status, 401);
+});
+
+Deno.test("fetchUsage falls back to the HTTP status when the error field has no usable message", async () => {
+  const { fn } = fakeFetch(() => json({ error: { type: "server_error" } }, 500));
+  const client = createAnthropicUsageClient({ fetch: fn });
+  await assertRejects(() => client.fetchUsage("token"), AnthropicUsageError, "HTTP 500");
 });
 
 Deno.test("fetchUsage throws AnthropicUsageError when the response shape is unexpected", async () => {

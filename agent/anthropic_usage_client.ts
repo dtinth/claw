@@ -31,6 +31,25 @@ export interface AnthropicUsageClientDeps {
   fetch?: typeof fetch;
 }
 
+/**
+ * Anthropic's error envelope nests the message — `{"error": {"type": "...",
+ * "message": "..."}}` — not a bare string. Extract that nested message when
+ * present; fall back to a bare string `error` field, then the HTTP status.
+ * (A naive `String(body.error)` on the nested-object shape stringifies to
+ * the useless "[object Object]".)
+ */
+function extractErrorMessage(body: unknown, status: number): string {
+  if (body && typeof body === "object" && "error" in body) {
+    const err = (body as { error: unknown }).error;
+    if (typeof err === "string") return err;
+    if (err && typeof err === "object" && "message" in err) {
+      const message = (err as { message: unknown }).message;
+      if (typeof message === "string") return message;
+    }
+  }
+  return `HTTP ${status}`;
+}
+
 export interface AnthropicUsageClient {
   fetchUsage(accessToken: string): Promise<AnthropicUsage>;
 }
@@ -65,10 +84,7 @@ export function createAnthropicUsageClient(
       }
 
       if (!response.ok) {
-        const message = body && typeof body === "object" && "error" in body
-          ? String((body as { error: unknown }).error)
-          : `HTTP ${response.status}`;
-        throw new AnthropicUsageError(message, response.status);
+        throw new AnthropicUsageError(extractErrorMessage(body, response.status), response.status);
       }
 
       const b = body as {

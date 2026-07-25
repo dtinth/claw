@@ -28,6 +28,21 @@ export interface RunUsageReportLoopParams {
   shouldStop?: () => boolean;
 }
 
+/**
+ * `String(x)` on a plain thrown object (not an Error) stringifies to the
+ * useless "[object Object]" — fall back to JSON.stringify for anything
+ * that isn't already an Error, so an unforeseen non-Error rejection still
+ * surfaces something legible.
+ */
+function describeError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
+}
+
 export async function runUsageReportLoop(params: RunUsageReportLoopParams): Promise<void> {
   const usageClient = createAnthropicUsageClient({
     ...(params.fetch ? { fetch: params.fetch } : {}),
@@ -48,11 +63,7 @@ export async function runUsageReportLoop(params: RunUsageReportLoopParams): Prom
         `claw usage-report: ok — 5h ${usage.fiveHourPct}%, 7d ${usage.weeklyPct}%\n`,
       );
     } catch (error) {
-      params.stderr(
-        `claw usage-report: poll failed, retrying: ${
-          error instanceof Error ? error.message : String(error)
-        }\n`,
-      );
+      params.stderr(`claw usage-report: poll failed, retrying: ${describeError(error)}\n`);
     }
     await params.sleep(params.intervalMs);
   }
