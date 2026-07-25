@@ -207,13 +207,36 @@ Deno.test("getAuthenticatedUser returns the login", async () => {
 Deno.test("postIssueComment posts as the user and returns the html url", async () => {
   const { fn, calls } = fakeFetch({
     "POST /repos/dtinth/claw/issues/7/comments": () =>
-      json({ html_url: "https://github.com/dtinth/claw/issues/7#issuecomment-1" }, 201),
+      json({
+        html_url: "https://github.com/dtinth/claw/issues/7#issuecomment-1",
+        id: 1,
+        created_at: "2024-03-01T12:00:00Z",
+        user: { id: 193136, login: "dtinth" },
+      }, 201),
   });
   const client = makeClient(fn);
   const result = await client.postIssueComment("ghu_x", "dtinth/claw", 7, "Thanks!");
   assertEquals(result.htmlUrl, "https://github.com/dtinth/claw/issues/7#issuecomment-1");
   assertEquals((calls[0]!.body as { body: string }).body, "Thanks!");
   assertEquals(calls[0]!.headers.get("authorization"), "Bearer ghu_x");
+});
+
+Deno.test("postIssueComment also returns enough to upsert into Grist without waiting for the webhook", async () => {
+  const { fn } = fakeFetch({
+    "POST /repos/dtinth/claw/issues/7/comments": () =>
+      json({
+        html_url: "https://github.com/dtinth/claw/issues/7#issuecomment-1",
+        id: 1,
+        created_at: "2024-03-01T12:00:00Z",
+        user: { id: 193136, login: "dtinth" },
+      }, 201),
+  });
+  const client = makeClient(fn);
+  const result = await client.postIssueComment("ghu_x", "dtinth/claw", 7, "Thanks!");
+  assertEquals(result.commentId, 1);
+  assertEquals(result.userId, 193136);
+  assertEquals(result.userLogin, "dtinth");
+  assertEquals(result.createdAt, "2024-03-01T12:00:00Z");
 });
 
 Deno.test("postDiscussionComment resolves the discussion id then mutates", async () => {

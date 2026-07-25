@@ -527,7 +527,13 @@ Deno.test("POST /draft refreshes an about-to-expire token before posting", async
     },
     postIssueComment: (token) => {
       postedToken = token;
-      return Promise.resolve({ htmlUrl: "https://github.com/dtinth/claw/issues/5#issuecomment-1" });
+      return Promise.resolve({
+        htmlUrl: "https://github.com/dtinth/claw/issues/5#issuecomment-1",
+        commentId: 1,
+        userId: 193136,
+        userLogin: "dtinth",
+        createdAt: "2024-03-01T12:00:00Z",
+      });
     },
   });
   // session with a refresh token and an already-expired access token
@@ -562,7 +568,13 @@ Deno.test("POST /draft posts an issue comment as the user", async () => {
   const github = fakeGitHub({
     postIssueComment: (token, repo, n, body) => {
       posted = { token, repo, n, body };
-      return Promise.resolve({ htmlUrl: "https://github.com/dtinth/claw/issues/5#issuecomment-1" });
+      return Promise.resolve({
+        htmlUrl: "https://github.com/dtinth/claw/issues/5#issuecomment-1",
+        commentId: 1,
+        userId: 193136,
+        userLogin: "dtinth",
+        createdAt: "2024-03-01T12:00:00Z",
+      });
     },
   });
   const form = new URLSearchParams({
@@ -586,10 +598,93 @@ Deno.test("POST /draft posts an issue comment as the user", async () => {
   });
 });
 
+Deno.test("POST /draft optimistically upserts the posted comment into Grist (doesn't wait for the webhook)", async () => {
+  const github = fakeGitHub({
+    postIssueComment: () =>
+      Promise.resolve({
+        htmlUrl: "https://github.com/dtinth/claw/issues/5#issuecomment-42",
+        commentId: 42,
+        userId: 193136,
+        userLogin: "dtinth",
+        createdAt: "2024-03-01T12:00:00Z",
+      }),
+  });
+  let upserted: unknown = null;
+  const grist = fakeGrist({
+    upsertComment: (record) => {
+      upserted = record;
+      return Promise.resolve();
+    },
+  });
+  const form = new URLSearchParams({
+    repo: "dtinth/claw",
+    kind: "issue",
+    number: "5",
+    body: "Thanks for the report!",
+  });
+  const res = await makeApp(github, { grist }).request("/draft", {
+    method: "POST",
+    headers: { cookie: await sessionCookie(), "content-type": "application/x-www-form-urlencoded" },
+    body: form.toString(),
+  });
+  assertEquals(res.status, 200);
+  assertEquals(upserted, {
+    Comment_ID: 42,
+    Repo: "dtinth/claw",
+    Issue: 5,
+    User_ID: 193136,
+    User_Name: "dtinth",
+    Body: "Thanks for the report!",
+    Time: Math.floor(Date.parse("2024-03-01T12:00:00Z") / 1000),
+  });
+});
+
+Deno.test("POST /draft still succeeds even if the optimistic Grist upsert fails", async () => {
+  const github = fakeGitHub({
+    postIssueComment: () =>
+      Promise.resolve({
+        htmlUrl: "https://github.com/dtinth/claw/issues/5#issuecomment-42",
+        commentId: 42,
+        userId: 193136,
+        userLogin: "dtinth",
+        createdAt: "2024-03-01T12:00:00Z",
+      }),
+  });
+  const grist = fakeGrist({
+    upsertComment: () => Promise.reject(new Error("grist is down")),
+  });
+  const form = new URLSearchParams({ repo: "dtinth/claw", kind: "issue", number: "5", body: "hi" });
+  const errors: string[] = [];
+  const original = console.error;
+  console.error = (...args: unknown[]) => errors.push(args.map(String).join(" "));
+  let res: Response;
+  try {
+    res = await makeApp(github, { grist }).request("/draft", {
+      method: "POST",
+      headers: {
+        cookie: await sessionCookie(),
+        "content-type": "application/x-www-form-urlencoded",
+      },
+      body: form.toString(),
+    });
+  } finally {
+    console.error = original;
+  }
+  assertEquals(res.status, 200);
+  assertStringIncludes(await res.text(), "Posted");
+  assertEquals(errors.some((e) => e.includes("optimistic Grist upsert failed")), true);
+});
+
 Deno.test("POST /draft's success page links to claw's own comment feed for an issue", async () => {
   const github = fakeGitHub({
     postIssueComment: () =>
-      Promise.resolve({ htmlUrl: "https://github.com/dtinth/claw/issues/5#issuecomment-1" }),
+      Promise.resolve({
+        htmlUrl: "https://github.com/dtinth/claw/issues/5#issuecomment-1",
+        commentId: 1,
+        userId: 193136,
+        userLogin: "dtinth",
+        createdAt: "2024-03-01T12:00:00Z",
+      }),
   });
   const form = new URLSearchParams({ repo: "dtinth/claw", kind: "issue", number: "5", body: "hi" });
   const res = await makeApp(github).request("/draft", {

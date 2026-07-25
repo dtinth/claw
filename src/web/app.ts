@@ -590,12 +590,35 @@ export function createApp(deps: AppDeps) {
     try {
       let postedUrl: string;
       if (target.kind === "issue") {
-        postedUrl = (await github.postIssueComment(
+        const posted = await github.postIssueComment(
           session.accessToken,
           repo,
           target.issueNumber,
           body,
-        )).htmlUrl;
+        );
+        postedUrl = posted.htmlUrl;
+        // Optimistic — the incoming webhook will also upsert this same row
+        // shortly. Doing it here too means the comment feed and sidebar
+        // don't have to wait on that round-trip. Never fatal to the post
+        // itself: the webhook is the fallback if this fails.
+        if (grist) {
+          try {
+            await grist.upsertComment({
+              Comment_ID: posted.commentId,
+              Repo: repo,
+              Issue: target.issueNumber,
+              User_ID: posted.userId,
+              User_Name: posted.userLogin,
+              Body: body,
+              Time: Math.floor(Date.parse(posted.createdAt) / 1000),
+            });
+          } catch (error) {
+            console.error(
+              `claw: optimistic Grist upsert failed for ${repo}#${target.issueNumber} (webhook will retry)`,
+              error,
+            );
+          }
+        }
       } else {
         postedUrl = (await github.postDiscussionComment(
           session.accessToken,

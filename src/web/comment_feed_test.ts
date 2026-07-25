@@ -1,5 +1,5 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
-import { issuePage, renderCommentsHtml } from "./comment_feed.ts";
+import { assertEquals, assertNotEquals, assertStringIncludes } from "@std/assert";
+import { authorColor, issuePage, renderCommentsHtml } from "./comment_feed.ts";
 import type { Comment } from "../grist/client.ts";
 
 function comment(overrides: Partial<Comment> = {}): Comment {
@@ -17,6 +17,26 @@ function comment(overrides: Partial<Comment> = {}): Comment {
 
 Deno.test("renderCommentsHtml shows an empty state for no comments", () => {
   assertStringIncludes(renderCommentsHtml([]), "No comments yet");
+});
+
+Deno.test("authorColor hardcodes dtinth to the design system's lime accent", () => {
+  assertEquals(authorColor("dtinth"), "#d7fc70");
+});
+
+Deno.test("authorColor is deterministic for the same username", () => {
+  assertEquals(authorColor("some-bot"), authorColor("some-bot"));
+});
+
+Deno.test("authorColor differs between usernames (not a constant)", () => {
+  assertNotEquals(authorColor("alice"), authorColor("bob"));
+});
+
+Deno.test("renderCommentsHtml colors each comment's author name and renders view-on-GitHub/copy-markdown as icon buttons", () => {
+  const html = renderCommentsHtml([comment({ author: "some-bot" })]);
+  assertStringIncludes(html, `style="color:${authorColor("some-bot")}"`);
+  assertStringIncludes(html, 'class="icon-btn"');
+  assertStringIncludes(html, 'icon="bi:github"');
+  assertStringIncludes(html, 'icon="bi:clipboard"');
 });
 
 Deno.test("renderCommentsHtml renders each comment's author, GitHub link and anchor id", () => {
@@ -111,7 +131,8 @@ Deno.test("issuePage embeds the given comments HTML and a Reply link to /draft",
 Deno.test("issuePage has a Reply link at both the top and the bottom", () => {
   const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "" });
   const replyCount =
-    html.split('<a href="/draft?repo=dtinth%2Fclaw&amp;issue=24">Reply</a>').length - 1;
+    html.split('<a class="btn-link" href="/draft?repo=dtinth%2Fclaw&amp;issue=24">Reply</a>')
+      .length - 1;
   assertEquals(replyCount, 2);
 });
 
@@ -124,6 +145,12 @@ Deno.test("issuePage has a 'jump to latest' link pointing at a stable anchor aft
   const commentsEnd = html.indexOf('id="comments-end"');
   const commentsDivEnd = html.indexOf("</div>", html.indexOf('id="comments"'));
   assertEquals(commentsEnd > commentsDivEnd, true);
+});
+
+Deno.test("issuePage styles Reply and Jump-to-latest as buttons (bigger tap target) while staying real links", () => {
+  const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "" });
+  assertStringIncludes(html, '<a class="btn-link" href="/draft?repo=dtinth%2Fclaw&amp;issue=24">');
+  assertStringIncludes(html, '<a class="btn-link" href="#comments-end">');
 });
 
 Deno.test("issuePage includes a polling script that refetches with ?partial=1", () => {

@@ -110,14 +110,18 @@ const STYLE = `
   input::placeholder, textarea::placeholder { color: var(--fg-muted); }
   textarea { min-height: 8rem; }
   textarea[hidden] { display: none; }
-  button {
+  button, .btn-link {
     padding: .5rem .9rem; background: linear-gradient(to bottom, #454443, #151413);
     border: 1px solid var(--border-base); border-radius: var(--radius-lg);
     box-shadow: 0 2px 4px rgba(0,0,0,.3); color: var(--fg-primary);
     font: 600 14px var(--font-sans); cursor: pointer; transition: all 300ms ease-out;
   }
-  button:hover { border-color: var(--border-strong); background: linear-gradient(to bottom, #555453, #151413); transition-duration: 0ms; }
-  button:active { background: linear-gradient(to bottom, #151413, #353433); }
+  .btn-link { display: inline-block; text-decoration: none; }
+  button:hover, .btn-link:hover {
+    border-color: var(--border-strong); background: linear-gradient(to bottom, #555453, #151413);
+    transition-duration: 0ms; text-decoration: none;
+  }
+  button:active, .btn-link:active { background: linear-gradient(to bottom, #151413, #353433); }
   button:disabled { opacity: .5; cursor: not-allowed; }
   button.secondary { color: var(--fg-muted); }
   .preset-row { display: flex; gap: .4rem; flex-wrap: wrap; margin: 0 0 .6rem; }

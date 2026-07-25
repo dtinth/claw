@@ -17,16 +17,43 @@ export function formatTime(epochSeconds: number): string {
 function commentTimeHtml(c: Comment): string {
   if (typeof c.time !== "number") return "";
   const iso = new Date(c.time * 1000).toISOString();
-  return ` — <time datetime="${escapeHtml(iso)}">${escapeHtml(formatTime(c.time))}</time>`;
+  return `<time datetime="${escapeHtml(iso)}">${escapeHtml(formatTime(c.time))}</time>`;
+}
+
+/**
+ * A deterministic per-username color (OKLCH, hue from a simple string hash)
+ * so recurring commenters are visually distinguishable at a glance without
+ * needing avatars. `dtinth` is hardcoded to the design system's signature
+ * lime rather than hashed, since it's already "the" accent for the author.
+ */
+export function authorColor(author: string): string {
+  if (author === "dtinth") return "#d7fc70";
+  let hash = 0;
+  for (let i = 0; i < author.length; i++) {
+    hash = (hash * 31 + author.charCodeAt(i)) >>> 0;
+  }
+  return `oklch(78% 0.15 ${hash % 360})`;
 }
 
 function renderComment(c: Comment): string {
   return `
     <div class="comment-card" id="issuecomment-${c.commentId}">
-      <p class="comment-meta"><strong>${escapeHtml(c.author)}</strong> —
-        <a href="${escapeHtml(c.url)}" target="_blank" rel="noopener">view on GitHub</a>${
-    commentTimeHtml(c)
-  } <button type="button" class="copy-md-btn" title="Copy markdown" aria-label="Copy markdown">📋</button></p>
+      <p class="comment-meta">
+        <span class="comment-author" style="color:${authorColor(c.author)}">${
+    escapeHtml(c.author)
+  }</span>
+        ${commentTimeHtml(c)}
+        <span class="comment-actions">
+          <a class="icon-btn" href="${
+    escapeHtml(c.url)
+  }" target="_blank" rel="noopener" title="View on GitHub" aria-label="View on GitHub">
+            <iconify-icon icon="bi:github"></iconify-icon>
+          </a>
+          <button type="button" class="icon-btn copy-md-btn" title="Copy markdown" aria-label="Copy markdown">
+            <iconify-icon icon="bi:clipboard"></iconify-icon>
+          </button>
+        </span>
+      </p>
       <textarea class="raw-markdown" hidden>${escapeHtml(c.body)}</textarea>
       ${renderMarkdown(c.body)}
     </div>`;
@@ -76,7 +103,23 @@ const PAGE_STYLE = `
     border: 1px solid var(--border-weak); border-radius: var(--radius-lg);
     padding: .8rem 1rem; margin: .8rem 0; background: var(--bg-base); box-shadow: var(--shadow-offset);
   }
-  .comment-meta { margin: 0 0 .5rem; }
+  .comment-meta {
+    margin: 0 0 .5rem; display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
+  }
+  .comment-author { font-weight: 700; }
+  .comment-meta time { font-size: .75rem; color: #8b8685; }
+  .comment-actions { margin-left: auto; display: flex; gap: .3rem; }
+  .icon-btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 1.8rem; height: 1.8rem; font-size: 1rem;
+    border: 1px solid #8b8685; border-radius: var(--radius-md);
+    background: transparent; color: #8b8685; cursor: pointer;
+    text-decoration: none; transition: all 300ms ease-out;
+  }
+  .icon-btn:hover {
+    color: var(--fg-primary); border-color: var(--fg-primary);
+    text-decoration: none; transition-duration: 0ms;
+  }
   .comment-card pre { position: relative; }
   .copy-code-btn {
     position: absolute; top: .4rem; right: .4rem;
@@ -85,11 +128,6 @@ const PAGE_STYLE = `
     background: var(--bg-elev); color: var(--fg-primary); cursor: pointer;
   }
   .copy-code-btn:hover { border-color: var(--border-strong); }
-  .copy-md-btn {
-    border: none; background: transparent; cursor: pointer;
-    font-size: .85rem; line-height: 1; padding: 0 .2rem; vertical-align: middle;
-  }
-  .copy-md-btn:hover { opacity: .7; }
 `;
 
 export interface IssuePageParams {
@@ -108,11 +146,12 @@ export interface IssuePageParams {
  */
 export function issuePage(params: IssuePageParams): string {
   const draftHref = `/draft?repo=${encodeURIComponent(params.repo)}&issue=${params.issue}`;
-  const replyLink = `<a href="${escapeHtml(draftHref)}">Reply</a>`;
+  const replyLink = `<a class="btn-link" href="${escapeHtml(draftHref)}">Reply</a>`;
   const readKey = `claw-read:${params.repo}#${params.issue}`;
   return `
   <style>${PAGE_STYLE}</style>
-  <p>${replyLink} · <a href="#comments-end">Jump to latest ↓</a></p>
+  <script async src="https://cdn.jsdelivr.net/npm/iconify-icon@2.1.0/dist/iconify-icon.min.js"></script>
+  <p>${replyLink} <a class="btn-link" href="#comments-end">Jump to latest ↓</a></p>
   <div id="comments" data-color-mode="dark" data-dark-theme="dark"
     class="markdown-body">${params.commentsHtml}</div>
   <div id="comments-end"></div>
@@ -167,11 +206,12 @@ export function issuePage(params: IssuePageParams): string {
     if (!btn) return;
     var card = btn.closest(".comment-card");
     var raw = card && card.querySelector(".raw-markdown");
-    if (!raw) return;
+    var icon = btn.querySelector("iconify-icon");
+    if (!raw || !icon) return;
     navigator.clipboard.writeText(raw.value).then(function () {
-      var original = btn.textContent;
-      btn.textContent = "✅";
-      setTimeout(function () { btn.textContent = original; }, 1500);
+      var original = icon.getAttribute("icon");
+      icon.setAttribute("icon", "bi:check2");
+      setTimeout(function () { icon.setAttribute("icon", original); }, 1500);
     }).catch(function () {});
   });
 

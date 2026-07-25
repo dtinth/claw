@@ -66,7 +66,9 @@ export interface GitHubClient {
     repo: string,
     issueNumber: number,
     body: string,
-  ): Promise<{ htmlUrl: string }>;
+  ): Promise<
+    { htmlUrl: string; commentId: number; userId: number; userLogin: string; createdAt: string }
+  >;
   postDiscussionComment(
     accessToken: string,
     repo: string,
@@ -280,8 +282,19 @@ export function createGitHubClient(deps: GitHubClientDeps): GitHubClient {
           `could not post comment: ${await readError(response)}`,
         );
       }
-      const comment = await response.json() as { html_url: string };
-      return { htmlUrl: comment.html_url };
+      const comment = await response.json() as {
+        html_url: string;
+        id: number;
+        created_at: string;
+        user: { id: number; login: string };
+      };
+      return {
+        htmlUrl: comment.html_url,
+        commentId: comment.id,
+        userId: comment.user.id,
+        userLogin: comment.user.login,
+        createdAt: comment.created_at,
+      };
     },
 
     async postDiscussionComment(accessToken, repo, discussionNumber, body, replyToId) {
