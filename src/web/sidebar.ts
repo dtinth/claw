@@ -26,12 +26,14 @@ const EXCERPT_MAX_LENGTH = 140;
 export interface ActivityItem {
   repo: string;
   issue: number;
-  /** The bot comment this entry represents — also the sidebar link's `#issuecomment-<id>` scroll target. */
+  /** The comment this entry represents — also the sidebar link's `#issuecomment-<id>` scroll target. */
   commentId: number;
   time?: number;
   excerpt: string;
   /** True when the excerpt starts at an unaddressed @mention of the human. */
   prominent?: boolean;
+  /** True when the thread's latest comment is the human's own — already replied, nothing pending. */
+  ownReply?: boolean;
 }
 
 /**
@@ -62,11 +64,13 @@ export interface GroupLatestActivityOptions {
 
 /**
  * Reduce `rows` (sorted newest-first, a mix of the bot's and the human's
- * comments) to one entry per repo+issue — the bot's most recent comment
- * there — capped at `maxItems` groups. A mention of `humanAuthor` is
- * surfaced prominently unless `humanAuthor` has since replied on that same
- * issue (checked against the same `rows`, so it's only reliable within
- * whatever window was fetched).
+ * comments) to one entry per repo+issue — whichever of the two commented
+ * there most recently — capped at `maxItems` groups. When the bot's
+ * comment is the latest, a mention of `humanAuthor` is surfaced
+ * prominently. When the human's own comment is the latest, the entry is
+ * flagged {@link ActivityItem.ownReply} instead (already replied, nothing
+ * pending) — since it's the newest row for that thread, no later bot
+ * mention could still be outstanding.
  */
 export function groupLatestActivity(
   rows: Comment[],
@@ -75,16 +79,15 @@ export function groupLatestActivity(
   const seen = new Set<string>();
   const items: ActivityItem[] = [];
   for (const c of rows) {
-    if (c.author !== opts.botAuthor) continue;
+    if (c.author !== opts.botAuthor && c.author !== opts.humanAuthor) continue;
     const key = `${c.repo}#${c.issue}`;
     if (seen.has(key)) continue;
     seen.add(key);
 
-    const respondedSince = rows.some((r) =>
-      r.author === opts.humanAuthor && r.repo === c.repo && r.issue === c.issue &&
-      typeof r.time === "number" && typeof c.time === "number" && r.time > c.time
-    );
-    const { text, mentioned } = findExcerpt(c.body, opts.humanAuthor);
+    const isOwnReply = c.author === opts.humanAuthor;
+    const { text, mentioned } = isOwnReply
+      ? { text: c.body.trim(), mentioned: false }
+      : findExcerpt(c.body, opts.humanAuthor);
 
     items.push({
       repo: c.repo,
@@ -92,7 +95,8 @@ export function groupLatestActivity(
       commentId: c.commentId,
       ...(c.time !== undefined ? { time: c.time } : {}),
       excerpt: truncate(text, EXCERPT_MAX_LENGTH),
-      ...(mentioned && !respondedSince ? { prominent: true } : {}),
+      ...(mentioned ? { prominent: true } : {}),
+      ...(isOwnReply ? { ownReply: true } : {}),
     });
     if (items.length >= opts.maxItems) break;
   }
@@ -147,11 +151,14 @@ export function renderActivityHtml(items: ActivityItem[], now: Date): string {
       ? ` class="prominent" data-repo="${escapeHtml(item.repo)}" data-issue="${item.issue}"` +
         ` data-comment-id="${item.commentId}"`
       : "";
+    const ownReplyIcon = item.ownReply
+      ? `<span class="own-reply-icon" title="You already replied" aria-hidden="true">↩</span> `
+      : "";
     return `<li${liAttrs}>
       <a href="/${escapeHtml(item.repo)}/issues/${item.issue}#issuecomment-${item.commentId}">${
       escapeHtml(item.repo)
     }#${item.issue}</a>${time}
-      <p class="${excerptClass}">${escapeHtml(item.excerpt)}</p>
+      <p class="${excerptClass}">${ownReplyIcon}${escapeHtml(item.excerpt)}</p>
     </li>`;
   }).join("\n");
 }

@@ -39,14 +39,21 @@ Deno.test("groupLatestActivity keeps the first (most recent) bot row per repo+is
   ]);
 });
 
-Deno.test("groupLatestActivity ignores rows from other authors when choosing the group's entry", () => {
+Deno.test("groupLatestActivity picks the human's own comment when it's the thread's most recent", () => {
   const rows = [
-    comment({ author: HUMAN, issue: 5, time: 300 }), // human's own comment — not a bot row
+    comment({ author: HUMAN, issue: 5, time: 300, body: "sounds good, thanks" }), // newest
     comment({ author: BOT, issue: 5, time: 200 }),
   ];
   const items = groupLatestActivity(rows, OPTS);
   assertEquals(items.length, 1);
-  assertEquals(items[0]!.time, 200); // the bot's row, not the human's newer one
+  assertEquals(items[0]!.time, 300);
+  assertEquals(items[0]!.ownReply, true);
+  assertEquals(items[0]!.excerpt, "sounds good, thanks");
+});
+
+Deno.test("groupLatestActivity ignores a row from neither the bot nor the human", () => {
+  const rows = [comment({ author: "someone-else", issue: 5, time: 300 })];
+  assertEquals(groupLatestActivity(rows, OPTS), []);
 });
 
 Deno.test("groupLatestActivity distinguishes issues with the same number in different repos", () => {
@@ -104,22 +111,26 @@ Deno.test("groupLatestActivity truncates a long excerpt with an ellipsis", () =>
   assertEquals(items[0]!.excerpt.endsWith("…"), true);
 });
 
-Deno.test("groupLatestActivity does not mark a mention prominent once the human replied since", () => {
+Deno.test("groupLatestActivity represents the human's reply (not the stale bot mention) once they've replied since", () => {
   const rows = [
-    comment({ author: BOT, issue: 5, time: 100, body: "@dtinth please review" }),
+    // newest-first, as the real Grist query returns them
     comment({ author: HUMAN, issue: 5, time: 200, body: "done, thanks" }),
+    comment({ author: BOT, issue: 5, time: 100, body: "@dtinth please review" }),
   ];
   const items = groupLatestActivity(rows, OPTS);
   assertEquals(items[0]!.prominent, undefined);
+  assertEquals(items[0]!.ownReply, true);
+  assertEquals(items[0]!.excerpt, "done, thanks");
 });
 
 Deno.test("groupLatestActivity keeps a mention prominent if the human's reply is older, not newer", () => {
   const rows = [
-    comment({ author: HUMAN, issue: 5, time: 50, body: "earlier context" }),
     comment({ author: BOT, issue: 5, time: 100, body: "@dtinth please review" }),
+    comment({ author: HUMAN, issue: 5, time: 50, body: "earlier context" }),
   ];
   const items = groupLatestActivity(rows, OPTS);
   assertEquals(items[0]!.prominent, true);
+  assertEquals(items[0]!.ownReply, undefined);
 });
 
 Deno.test("groupLatestActivity carries the chosen comment's id, for the sidebar's deep link and read tracking", () => {
@@ -196,6 +207,27 @@ Deno.test("renderActivityHtml does not mark a non-prominent item, nor tag it wit
   );
   assertEquals(html.includes("prominent"), false);
   assertEquals(html.includes("data-comment-id"), false);
+});
+
+Deno.test("renderActivityHtml prefixes an own-reply item's excerpt with a reply icon", () => {
+  const html = renderActivityHtml(
+    [{ repo: "dtinth/claw", issue: 5, commentId: 1, excerpt: "done, thanks", ownReply: true }],
+    NOW,
+  );
+  assertStringIncludes(html, 'class="own-reply-icon"');
+  // The icon must sit right before the excerpt text, inside the same <p>.
+  assertStringIncludes(
+    html,
+    'own-reply-icon" title="You already replied" aria-hidden="true">↩</span> done, thanks',
+  );
+});
+
+Deno.test("renderActivityHtml has no reply icon for a regular (non-own-reply) item", () => {
+  const html = renderActivityHtml(
+    [{ repo: "dtinth/claw", issue: 5, commentId: 1, excerpt: "routine" }],
+    NOW,
+  );
+  assertEquals(html.includes("own-reply-icon"), false);
 });
 
 Deno.test("renderActivityHtml escapes the repo and excerpt (defense in depth)", () => {

@@ -169,6 +169,7 @@ const STYLE = `
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
   .sidebar-list .excerpt.prominent { color: var(--fg-primary); font-weight: 600; }
+  .own-reply-icon { color: var(--fg-muted); }
   .mark-unread-icon {
     display: inline-block; background: none; border: none; cursor: pointer; color: var(--fg-muted);
     font-size: .8rem; line-height: 1; padding: 0 .2rem; vertical-align: middle;
