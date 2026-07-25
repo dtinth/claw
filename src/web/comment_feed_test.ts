@@ -163,7 +163,7 @@ Deno.test("issuePage has a 'jump to latest' link pointing at a stable anchor aft
   assertStringIncludes(html, 'href="#comments-end"');
   assertStringIncludes(html, 'id="comments-end"');
   // The anchor target must sit outside #comments, since that container's
-  // innerHTML gets replaced wholesale on every poll.
+  // contents get morphed (replaced) on every poll.
   const commentsEnd = html.indexOf('id="comments-end"');
   const commentsDivEnd = html.indexOf("</div>", html.indexOf('id="comments"'));
   assertEquals(commentsEnd > commentsDivEnd, true);
@@ -204,6 +204,13 @@ Deno.test("issuePage's refresh preserves an open earlier-comments <details> acro
   const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "" });
   assertStringIncludes(html, "details.earlier-comments");
   assertStringIncludes(html, "wasOpen");
+});
+
+Deno.test("issuePage's refresh morphs the comment list instead of an innerHTML swap (so unchanged <img>s don't reload)", () => {
+  const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "" });
+  assertStringIncludes(html, "cdn.jsdelivr.net/npm/morphdom@");
+  assertStringIncludes(html, "morphdom(");
+  assertEquals(html.includes("container.innerHTML = html"), false);
 });
 
 Deno.test("issuePage wires the copy-markdown button via delegation (survives a refresh swap)", () => {

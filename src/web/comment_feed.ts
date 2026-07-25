@@ -197,6 +197,7 @@ export function issuePage(params: IssuePageParams): string {
   return `
   <style>${PAGE_STYLE}</style>
   <script async src="https://cdn.jsdelivr.net/npm/iconify-icon@2.1.0/dist/iconify-icon.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/morphdom@2.7.8/dist/morphdom-umd.min.js"></script>
   <p>${replyLink} <a class="btn-link" href="#comments-end">Jump to latest ↓</a></p>
   <div id="comments" data-color-mode="dark" data-dark-theme="dark"
     class="markdown-body">${params.commentsHtml}</div>
@@ -268,7 +269,14 @@ export function issuePage(params: IssuePageParams): string {
         if (html === null) return;
         var details = container.querySelector("details.earlier-comments");
         var wasOpen = !!(details && details.open);
-        container.innerHTML = html;
+        // morphdom (not innerHTML) so unchanged nodes — notably <img>s in
+        // comment bodies — aren't torn down and reloaded on every poll.
+        // It matches elements by id, which every .comment-card already has.
+        morphdom(
+          container,
+          '<div id="comments" data-color-mode="dark" data-dark-theme="dark" class="markdown-body">'
+            + html + "</div>",
+        );
         if (wasOpen) {
           var newDetails = container.querySelector("details.earlier-comments");
           if (newDetails) newDetails.open = true;
