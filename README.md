@@ -6,8 +6,7 @@ A command center for my agentic open source contributions.
 
 claw is built around a GitHub App (in this deployment, **dtinth/claw**) that is
 installed on my repositories, and gives my coding agents **fine-grained,
-time-boxed access** to them — letting agents draft comments for me to post
-rather than commenting as themselves.
+time-boxed access** to them.
 
 ## My guidelines for open source contributions with a coding agent
 
@@ -19,38 +18,50 @@ AI-generated.
 
 On **other people's repos**, the agent never opens a PR or comments directly —
 it only works on my personal fork and talks to me. I relay to upstream
-maintainers myself (the agent usually drafts what I post, but I'm the one
-posting it). The exception is projects I lead myself — there I install
-`dtinth-claw[bot]` directly on the repo, e.g.
+maintainers myself: the agent's draft is usually a starting point — talking
+points I rewrite in my own voice, though sometimes I do post it close to
+as-is — but I review and post everything myself. The exception is projects I
+lead myself — there I install `dtinth-claw[bot]` directly on the repo, e.g.
 [creatorsgarten/contentsgarten#464](https://github.com/creatorsgarten/contentsgarten/issues/464)
 and [bemusic/bemuse#844](https://github.com/bemusic/bemuse/issues/844).
 
 ## What it does
 
-claw is three things working together:
+claw is three things working together.
 
-- **A web dashboard** — the control center where I monitor my agents'
-  activity and chat with them publicly on GitHub. A sidebar shows the
-  issues my agents are currently working on, plus my Claude subscription's
-  usage meters: a small **pacemaker** figure next to each one compares how
-  much of the usage window has elapsed against how much of the limit is
-  already used — positive means there's a comfortable buffer at the current
-  pace, negative is a warning that usage is outpacing the clock and will hit
-  the limit before it resets unless the pace eases up. The dashboard also
-  has a comment feed that's less janky than GitHub's own UI, so I can keep
-  up with a conversation and reply to my agent more efficiently.
-- **A server-side access token broker** — lets me grant each coding agent
-  fine-grained access to specific repositories while every agent shares the
-  same GitHub identity. An agent requests a token from claw; claw mints a
-  GitHub App installation token (~1 hour lifetime) scoped to just that repo
-  and just those permissions, so every action any agent takes is scoped and
-  auditable. Since agents also need to notice new comments quickly, claw
-  runs a local database (built on [Grist](https://www.getgrist.com/)) fed by
-  a GitHub webhook — new comments land there the moment they're posted, so
-  agents poll claw's local copy instead of polling GitHub directly, staying
+### The web dashboard
+
+The control center where I monitor my agents' activity and chat with them
+publicly on GitHub.
+
+- A sidebar shows the issues my agents are currently working on.
+- It also shows my Claude subscription's usage meters, each with a small
+  **pacemaker** figure comparing how much of the usage window has elapsed
+  against how much of the limit is already used:
+  - **Positive** — a comfortable buffer at the current pace.
+  - **Negative** — a warning: usage is outpacing the clock and will hit the
+    limit before it resets unless the pace eases up.
+- A comment feed that's less janky than GitHub's own UI, so I can keep up
+  with a conversation and reply to my agent more efficiently.
+
+### The access token broker
+
+Lets me grant each coding agent fine-grained access to specific
+repositories while every agent shares the same GitHub identity.
+
+- An agent requests a token from claw; claw mints a GitHub App installation
+  token (~1 hour lifetime) scoped to just that repo and just those
+  permissions, so every action any agent takes is scoped and auditable.
+- Agents also need to notice new comments quickly, so claw runs a local
+  database (built on [Grist](https://www.getgrist.com/)) fed by a GitHub
+  webhook. New comments land there the moment they're posted, so agents
+  poll claw's local copy instead of polling GitHub directly — staying
   responsive while remaining a well-behaved GitHub API citizen.
-- **The CLI** — the piece of code my coding agent actually runs, to talk to
-  the token broker and the comment relay (see [Agent CLI](#agent-cli) below).
+
+### The CLI
+
+The piece of code my coding agent actually runs, to talk to the token
+broker and the comment relay (see [Agent CLI](#agent-cli) below).
 
 ### 1. Repository-scoped installation tokens, on demand
 
