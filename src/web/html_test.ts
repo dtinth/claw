@@ -53,3 +53,11 @@ Deno.test("layout loads iconify-icon (for the sidebar's own-reply icon) only whe
   const withoutSidebar = layout("t", "<p>BODY</p>");
   assertEquals(withoutSidebar.includes("iconify-icon"), false);
 });
+
+Deno.test("layout loads relative-time-element (self-updating sidebar timestamps) only when a sidebar is given", () => {
+  const withSidebar = layout("t", "<p>BODY</p>", "<p>SIDEBAR</p>");
+  assertStringIncludes(withSidebar, "cdn.jsdelivr.net/npm/@github/relative-time-element");
+  assertStringIncludes(withSidebar, 'type="module"');
+  const withoutSidebar = layout("t", "<p>BODY</p>");
+  assertEquals(withoutSidebar.includes("relative-time-element"), false);
+});

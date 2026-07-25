@@ -177,7 +177,19 @@ Deno.test("renderActivityHtml links each item to the specific comment on claw's 
   assertStringIncludes(html, 'href="/dtinth/claw/issues/5#issuecomment-42"');
   assertStringIncludes(html, "dtinth/claw#5");
   assertStringIncludes(html, "an excerpt");
-  assertStringIncludes(html, "<time");
+  assertStringIncludes(html, "<relative-time");
+});
+
+Deno.test("renderActivityHtml uses <relative-time> (self-updating), not a static string, so it can't go stale in a backgrounded tab", () => {
+  const html = renderActivityHtml(
+    [{ repo: "dtinth/claw", issue: 5, commentId: 42, time: 1709294400, excerpt: "an excerpt" }],
+    NOW,
+  );
+  assertStringIncludes(html, 'datetime="2024-03-01T12:00:00.000Z"');
+  assertStringIncludes(html, 'format="relative"');
+  // The rendered fallback text (for the instant before upgrade) still uses
+  // our own formatRelativeTime — checked precisely elsewhere.
+  assertStringIncludes(html, "</relative-time>");
 });
 
 Deno.test("renderActivityHtml omits the time element when the item has none", () => {
@@ -185,7 +197,7 @@ Deno.test("renderActivityHtml omits the time element when the item has none", ()
     [{ repo: "dtinth/claw", issue: 5, commentId: 1, excerpt: "x" }],
     NOW,
   );
-  assertEquals(html.includes("<time"), false);
+  assertEquals(html.includes("<relative-time"), false);
 });
 
 Deno.test("renderActivityHtml marks a prominent item distinctly and tags it for client-side read tracking", () => {

@@ -248,7 +248,8 @@ ${body}`;
 <style>${STYLE}</style>
 ${
     sidebar
-      ? '<script async src="https://cdn.jsdelivr.net/npm/iconify-icon@2.1.0/dist/iconify-icon.min.js"></script>'
+      ? '<script async src="https://cdn.jsdelivr.net/npm/iconify-icon@2.1.0/dist/iconify-icon.min.js"></script>\n' +
+        '<script type="module" src="https://cdn.jsdelivr.net/npm/@github/relative-time-element@5.3.0/dist/bundle.min.js"></script>'
       : ""
   }
 </head>

@@ -5,7 +5,6 @@
  * dashboard's own script so it never blocks the page's initial render.
  */
 import type { Comment } from "../grist/client.ts";
-import { formatTime } from "./comment_feed.ts";
 import { escapeHtml } from "./html.ts";
 
 /** The GitHub login whose activity the sidebar tracks. */
@@ -141,10 +140,18 @@ export function renderActivityHtml(items: ActivityItem[], now: Date): string {
     return `<li class="muted">No activity yet.</li>`;
   }
   return items.map((item) => {
+    // <relative-time> (github.com/github/relative-time-element) rather than
+    // a plain <time> with a pre-computed string: a backgrounded tab's
+    // 15s-while-visible poll can go a long while without refetching, and a
+    // baked-in "5 hours ago" would go stale for however long that is. The
+    // custom element recomputes its own display from `datetime` — on an
+    // interval, and immediately on regaining visibility — so it can't go
+    // stale. The rendered fallback text is only for the instant before
+    // upgrade (or if the script fails to load).
     const time = typeof item.time === "number"
-      ? ` <time datetime="${escapeHtml(new Date(item.time * 1000).toISOString())}" title="${
-        escapeHtml(formatTime(item.time))
-      }">${escapeHtml(formatRelativeTime(item.time, now))}</time>`
+      ? ` <relative-time datetime="${
+        escapeHtml(new Date(item.time * 1000).toISOString())
+      }" format="relative">${escapeHtml(formatRelativeTime(item.time, now))}</relative-time>`
       : "";
     const excerptClass = item.prominent ? "excerpt prominent" : "excerpt";
     const liAttrs = item.prominent
