@@ -146,3 +146,12 @@ Deno.test("issuePage's refresh preserves an open earlier-comments <details> acro
   assertStringIncludes(html, "details.earlier-comments");
   assertStringIncludes(html, "wasOpen");
 });
+
+Deno.test("issuePage adds a copy button to code blocks, including after a refresh poll", () => {
+  const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "" });
+  assertStringIncludes(html, "copy-code-btn");
+  assertStringIncludes(html, "navigator.clipboard.writeText");
+  // Called once on load and again after every refresh poll — not just once.
+  const calls = html.split("addCopyButtons();").length - 1;
+  assertEquals(calls, 2);
+});

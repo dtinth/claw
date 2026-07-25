@@ -58,6 +58,14 @@ const PAGE_STYLE = `
   ${GFM_CSS}
   .comment-card { border: 1px solid #8884; border-radius: 8px; padding: .8rem 1rem; margin: .8rem 0; }
   .comment-meta { margin: 0 0 .5rem; }
+  .comment-card pre { position: relative; }
+  .copy-code-btn {
+    position: absolute; top: .4rem; right: .4rem;
+    font-size: .7rem; padding: .15rem .5rem; line-height: 1.4;
+    border-radius: 4px; border: 1px solid #8884; background: #8881;
+    color: inherit; cursor: pointer;
+  }
+  .copy-code-btn:hover { background: #8883; }
 `;
 
 export interface IssuePageParams {
@@ -109,6 +117,25 @@ export function issuePage(params: IssuePageParams): string {
     }
   }
 
+  function addCopyButtons() {
+    container.querySelectorAll("pre").forEach(function (pre) {
+      if (pre.querySelector(".copy-code-btn")) return;
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "copy-code-btn";
+      btn.textContent = "Copy";
+      btn.addEventListener("click", function () {
+        var codeEl = pre.querySelector("code") || pre;
+        navigator.clipboard.writeText(codeEl.textContent).then(function () {
+          btn.textContent = "Copied!";
+          setTimeout(function () { btn.textContent = "Copy"; }, 1500);
+        }).catch(function () {});
+      });
+      pre.appendChild(btn);
+    });
+  }
+  addCopyButtons();
+
   function refresh() {
     fetch(location.pathname + "?partial=1")
       .then(function (r) { return r.ok ? r.text() : null; })
@@ -121,6 +148,7 @@ export function issuePage(params: IssuePageParams): string {
           var newDetails = container.querySelector("details.earlier-comments");
           if (newDetails) newDetails.open = true;
         }
+        addCopyButtons();
       })
       .catch(function () {});
   }
