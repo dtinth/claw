@@ -26,7 +26,8 @@ function renderComment(c: Comment): string {
       <p class="comment-meta"><strong>${escapeHtml(c.author)}</strong> —
         <a href="${escapeHtml(c.url)}" target="_blank" rel="noopener">view on GitHub</a>${
     commentTimeHtml(c)
-  }</p>
+  } <button type="button" class="copy-md-btn" title="Copy markdown" aria-label="Copy markdown">📋</button></p>
+      <textarea class="raw-markdown" hidden>${escapeHtml(c.body)}</textarea>
       ${renderMarkdown(c.body)}
     </div>`;
 }
@@ -66,6 +67,11 @@ const PAGE_STYLE = `
     color: inherit; cursor: pointer;
   }
   .copy-code-btn:hover { background: #8883; }
+  .copy-md-btn {
+    border: none; background: transparent; cursor: pointer;
+    font-size: .85rem; line-height: 1; padding: 0 .2rem; vertical-align: middle;
+  }
+  .copy-md-btn:hover { opacity: .7; }
 `;
 
 export interface IssuePageParams {
@@ -135,6 +141,21 @@ export function issuePage(params: IssuePageParams): string {
     });
   }
   addCopyButtons();
+
+  // Delegated (not per-button) so it keeps working after refresh() swaps
+  // in fresh comment cards without needing a re-attach step.
+  container.addEventListener("click", function (e) {
+    var btn = e.target.closest(".copy-md-btn");
+    if (!btn) return;
+    var card = btn.closest(".comment-card");
+    var raw = card && card.querySelector(".raw-markdown");
+    if (!raw) return;
+    navigator.clipboard.writeText(raw.value).then(function () {
+      var original = btn.textContent;
+      btn.textContent = "✅";
+      setTimeout(function () { btn.textContent = original; }, 1500);
+    }).catch(function () {});
+  });
 
   function refresh() {
     fetch(location.pathname + "?partial=1")

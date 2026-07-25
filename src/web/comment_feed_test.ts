@@ -46,6 +46,13 @@ Deno.test("renderCommentsHtml renders markdown (GFM) in the comment body", () =>
   assertStringIncludes(html, '<a href="https://example.com"');
 });
 
+Deno.test("renderCommentsHtml carries each comment's raw markdown for the copy-markdown button", () => {
+  const html = renderCommentsHtml([comment({ body: "**bold** source" })]);
+  assertStringIncludes(html, "copy-md-btn");
+  assertStringIncludes(html, 'class="raw-markdown" hidden');
+  assertStringIncludes(html, "**bold** source");
+});
+
 Deno.test("renderCommentsHtml sanitizes a script tag out of the comment body", () => {
   const html = renderCommentsHtml([comment({ body: "hi <script>alert(1)</script> there" })]);
   assertEquals(html.includes("<script>"), false);
@@ -55,7 +62,10 @@ Deno.test("renderCommentsHtml sanitizes a script tag out of the comment body", (
 
 Deno.test("renderCommentsHtml sanitizes an inline event-handler attribute", () => {
   const html = renderCommentsHtml([comment({ body: '<img src=x onerror="alert(1)">' })]);
-  assertEquals(html.includes("onerror"), false);
+  // The raw-markdown carrier (for the "copy markdown" button) legitimately
+  // contains the escaped word "onerror" as inert text — what must never
+  // appear is a live, unescaped attribute.
+  assertEquals(html.includes('onerror="'), false);
 });
 
 Deno.test("renderCommentsHtml escapes the author name and URL (no injection via Grist data)", () => {
@@ -145,6 +155,13 @@ Deno.test("issuePage's refresh preserves an open earlier-comments <details> acro
   const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "" });
   assertStringIncludes(html, "details.earlier-comments");
   assertStringIncludes(html, "wasOpen");
+});
+
+Deno.test("issuePage wires the copy-markdown button via delegation (survives a refresh swap)", () => {
+  const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "" });
+  assertStringIncludes(html, "copy-md-btn");
+  assertStringIncludes(html, "raw-markdown");
+  assertStringIncludes(html, 'container.addEventListener("click"');
 });
 
 Deno.test("issuePage adds a copy button to code blocks, including after a refresh poll", () => {
