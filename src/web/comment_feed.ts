@@ -35,6 +35,52 @@ export function authorColor(author: string): string {
   return `oklch(78% 0.15 ${hash % 360})`;
 }
 
+// Private-use-area codepoints as marker delimiters: they never appear in
+// real comment text and aren't HTML-special, so they survive GFM rendering
+// untouched and can be swapped for real markup afterwards.
+const MARK_START = "";
+const MARK_END = "";
+
+/** A GitHub-style @mention — not preceded by a word char (so `me@x.com` doesn't match), username rules (alnum/hyphen, no leading/trailing hyphen, <=39 chars). */
+const MENTION_RE = /(?<![\w@])@([a-zA-Z0-9](?:[a-zA-Z0-9-]{0,37}[a-zA-Z0-9])?)\b/g;
+const CODE_SPAN_RE = /```[\s\S]*?```|`[^`\n]*`/g;
+
+/**
+ * Render a comment body as markdown, with `@mentions` colorized the same
+ * way as the comment author's own name ({@link authorColor}). `@deno/gfm`
+ * doesn't auto-link mentions (it has no repo context to resolve them
+ * against), so this is done with a placeholder swap around the render:
+ * mentions (and code spans, so a mention-shaped token inside a code
+ * snippet isn't touched) are marked before rendering, then the markers are
+ * replaced with real `<span>` markup in the rendered HTML.
+ */
+function renderCommentBody(body: string): string {
+  const codeSpans: string[] = [];
+  const withoutCode = body.replace(CODE_SPAN_RE, (m) => {
+    codeSpans.push(m);
+    return `${MARK_START}C${codeSpans.length - 1}${MARK_END}`;
+  });
+
+  const mentionHtml: string[] = [];
+  const withMentionMarkers = withoutCode.replace(MENTION_RE, (_m, username: string) => {
+    mentionHtml.push(
+      `<span style="color:${authorColor(username)}">@${escapeHtml(username)}</span>`,
+    );
+    return `${MARK_START}M${mentionHtml.length - 1}${MARK_END}`;
+  });
+
+  const restored = withMentionMarkers.replace(
+    new RegExp(`${MARK_START}C(\\d+)${MARK_END}`, "g"),
+    (_m, i: string) => codeSpans[Number(i)]!,
+  );
+
+  const html = renderMarkdown(restored);
+  return html.replace(
+    new RegExp(`${MARK_START}M(\\d+)${MARK_END}`, "g"),
+    (_m, i: string) => mentionHtml[Number(i)]!,
+  );
+}
+
 function renderComment(c: Comment): string {
   return `
     <div class="comment-card" id="issuecomment-${c.commentId}">
@@ -55,7 +101,7 @@ function renderComment(c: Comment): string {
         </span>
       </p>
       <textarea class="raw-markdown" hidden>${escapeHtml(c.body)}</textarea>
-      ${renderMarkdown(c.body)}
+      ${renderCommentBody(c.body)}
     </div>`;
 }
 

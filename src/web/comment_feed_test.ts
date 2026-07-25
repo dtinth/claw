@@ -66,6 +66,28 @@ Deno.test("renderCommentsHtml renders markdown (GFM) in the comment body", () =>
   assertStringIncludes(html, '<a href="https://example.com"');
 });
 
+Deno.test("renderCommentsHtml colorizes an @mention in the body the same way as its author color", () => {
+  const html = renderCommentsHtml([comment({ body: "thanks @some-bot for the fix" })]);
+  assertStringIncludes(html, `<span style="color:${authorColor("some-bot")}">@some-bot</span>`);
+});
+
+Deno.test("renderCommentsHtml does not colorize an email address as a mention", () => {
+  const html = renderCommentsHtml([comment({ body: "reach me at me@example.com" })]);
+  assertEquals(html.includes(`color:${authorColor("example")}`), false);
+  assertStringIncludes(html, "me@example.com");
+});
+
+Deno.test("renderCommentsHtml does not colorize an @-looking token inside a code span", () => {
+  const html = renderCommentsHtml([comment({ body: "use the `@decorator` syntax" })]);
+  assertEquals(html.includes(`color:${authorColor("decorator")}`), false);
+  assertStringIncludes(html, "@decorator");
+});
+
+Deno.test("renderCommentsHtml does not colorize an @-looking token inside a fenced code block", () => {
+  const html = renderCommentsHtml([comment({ body: "```\n@decorator\ndef f(): pass\n```" })]);
+  assertEquals(html.includes(`color:${authorColor("decorator")}`), false);
+});
+
 Deno.test("renderCommentsHtml carries each comment's raw markdown for the copy-markdown button", () => {
   const html = renderCommentsHtml([comment({ body: "**bold** source" })]);
   assertStringIncludes(html, "copy-md-btn");
