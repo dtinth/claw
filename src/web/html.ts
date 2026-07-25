@@ -169,7 +169,7 @@ const STYLE = `
   .sidebar-list li.prominent {
     border-left: 3px solid var(--accent-lime); padding-left: .5rem; margin-left: -.5rem;
   }
-  .sidebar-list time { display: block; color: var(--fg-muted); font-size: .75rem; }
+  .sidebar-list relative-time { display: block; color: var(--fg-muted); font-size: .75rem; }
   .sidebar-list .excerpt {
     margin: .2rem 0 0; color: var(--fg-muted);
     display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
