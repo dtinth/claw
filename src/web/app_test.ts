@@ -598,6 +598,51 @@ Deno.test("POST /draft posts an issue comment as the user", async () => {
   });
 });
 
+Deno.test("POST /draft trims trailing whitespace (from an unused quick-reply pre-fill) before posting", async () => {
+  let postedBody: string | null = null;
+  const github = fakeGitHub({
+    postIssueComment: (_token, _repo, _n, body) => {
+      postedBody = body;
+      return Promise.resolve({
+        htmlUrl: "https://github.com/dtinth/claw/issues/5#issuecomment-1",
+        commentId: 1,
+        userId: 193136,
+        userLogin: "dtinth",
+        createdAt: "2024-03-01T12:00:00Z",
+      });
+    },
+  });
+  const form = new URLSearchParams({
+    repo: "dtinth/claw",
+    kind: "issue",
+    number: "5",
+    body: "(A)\n\n",
+  });
+  const res = await makeApp(github).request("/draft", {
+    method: "POST",
+    headers: { cookie: await sessionCookie(), "content-type": "application/x-www-form-urlencoded" },
+    body: form.toString(),
+  });
+  assertEquals(res.status, 200);
+  assertEquals(postedBody, "(A)");
+});
+
+Deno.test("POST /draft rejects a body that's only whitespace (e.g. an unedited quick-reply pre-fill)", async () => {
+  const form = new URLSearchParams({
+    repo: "dtinth/claw",
+    kind: "issue",
+    number: "5",
+    body: "   \n\n",
+  });
+  const res = await makeApp(fakeGitHub()).request("/draft", {
+    method: "POST",
+    headers: { cookie: await sessionCookie(), "content-type": "application/x-www-form-urlencoded" },
+    body: form.toString(),
+  });
+  assertEquals(res.status, 400);
+  assertStringIncludes(await res.text(), "must not be empty");
+});
+
 Deno.test("POST /draft optimistically upserts the posted comment into Grist (doesn't wait for the webhook)", async () => {
   const github = fakeGitHub({
     postIssueComment: () =>
@@ -1037,6 +1082,35 @@ Deno.test("GET /:owner/:repo/issues/:number renders the comment feed when logged
   assertStringIncludes(html, "<strong>world</strong>"); // GFM-rendered
   assertStringIncludes(html, 'id="issuecomment-1"');
   assertEquals(receivedQuery, { repo: "dtinth/claw", issue: 24 });
+});
+
+Deno.test("GET /:owner/:repo/issues/:number renders quick-reply links parsed from the latest comment", async () => {
+  const grist = fakeGrist({
+    queryComments: () =>
+      Promise.resolve([
+        SAMPLE_ISSUE_COMMENT,
+        {
+          ...SAMPLE_ISSUE_COMMENT,
+          commentId: 2,
+          author: "dtinth-claw[bot]",
+          body: "Question text\n\n<!--\nQuick replies:\n- (A)\n- (B)\n-->\n",
+        },
+      ]),
+  });
+  const res = await makeApp(fakeGitHub(), { grist }).request("/dtinth/claw/issues/24", {
+    headers: { cookie: await sessionCookie() },
+  });
+  const html = await res.text();
+  assertStringIncludes(html, ">(A)<");
+  assertStringIncludes(html, ">(B)<");
+});
+
+Deno.test("GET /:owner/:repo/issues/:number shows no quick replies when the latest comment has none", async () => {
+  const grist = fakeGrist({ queryComments: () => Promise.resolve([SAMPLE_ISSUE_COMMENT]) });
+  const res = await makeApp(fakeGitHub(), { grist }).request("/dtinth/claw/issues/24", {
+    headers: { cookie: await sessionCookie() },
+  });
+  assertEquals((await res.text()).includes("Quick replies"), false);
 });
 
 Deno.test("GET /:owner/:repo/pull/:number uses the same handler as /issues/:number", async () => {

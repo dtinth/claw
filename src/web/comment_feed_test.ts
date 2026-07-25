@@ -1,5 +1,5 @@
 import { assertEquals, assertNotEquals, assertStringIncludes } from "@std/assert";
-import { authorColor, issuePage, renderCommentsHtml } from "./comment_feed.ts";
+import { authorColor, issuePage, parseQuickReplies, renderCommentsHtml } from "./comment_feed.ts";
 import type { Comment } from "../grist/client.ts";
 
 function comment(overrides: Partial<Comment> = {}): Comment {
@@ -227,4 +227,54 @@ Deno.test("issuePage adds a copy button to code blocks, including after a refres
   // Called once on load and again after every refresh poll — not just once.
   const calls = html.split("addCopyButtons();").length - 1;
   assertEquals(calls, 2);
+});
+
+// --- parseQuickReplies -------------------------------------------------
+
+Deno.test("parseQuickReplies extracts each dash-prefixed line from the marker block", () => {
+  const body =
+    "Some comment text.\n\n<!--\nQuick replies:\n- (A)\n- (B)\n- As you recommend\n-->\n";
+  assertEquals(parseQuickReplies(body), ["(A)", "(B)", "As you recommend"]);
+});
+
+Deno.test("parseQuickReplies returns an empty list when there's no marker block", () => {
+  assertEquals(parseQuickReplies("just a normal comment"), []);
+});
+
+Deno.test("parseQuickReplies ignores non-dash lines inside the block", () => {
+  const body = "<!--\nQuick replies:\nsome stray line\n- (A)\n-->\n";
+  assertEquals(parseQuickReplies(body), ["(A)"]);
+});
+
+Deno.test("parseQuickReplies is case-insensitive on the 'Quick replies:' label", () => {
+  const body = "<!--\nquick REPLIES:\n- (A)\n-->\n";
+  assertEquals(parseQuickReplies(body), ["(A)"]);
+});
+
+// --- quick-reply buttons in issuePage -----------------------------------
+
+Deno.test("issuePage renders a quick-reply link (next to the bottom Reply button) pre-filling the draft body", () => {
+  const html = issuePage({
+    repo: "dtinth/claw",
+    issue: 24,
+    commentsHtml: "",
+    quickReplies: ["(A)", "As you recommend"],
+  });
+  // Two trailing newlines, then URI-encoded, then HTML-escaped (only `&` is
+  // actually special in this particular string) — matching the
+  // implementation's own href-building steps.
+  const encodedBody = encodeURIComponent("(A)\n\n");
+  assertStringIncludes(
+    html,
+    `href="/draft?repo=dtinth%2Fclaw&amp;issue=24&amp;body=${encodedBody}"`,
+  );
+  assertStringIncludes(html, ">As you recommend<");
+  // Only the bottom Reply paragraph gets quick replies, not the top one.
+  const topP = html.slice(0, html.indexOf("#comments-end"));
+  assertEquals(topP.includes("As you recommend"), false);
+});
+
+Deno.test("issuePage shows no quick-reply links when there are none", () => {
+  const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "" });
+  assertEquals(html.includes("As you recommend"), false);
 });

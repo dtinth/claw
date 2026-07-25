@@ -176,12 +176,39 @@ const PAGE_STYLE = `
   .copy-code-btn:hover { border-color: var(--border-strong); }
 `;
 
+/**
+ * A convention (documented in the operator's `~/.claude/CLAUDE.md`) for
+ * offering one-click reply buttons: a trailing HTML comment naming short
+ * reply options, invisible in the rendered comment —
+ * ```
+ * <!--
+ * Quick replies:
+ * - (A)
+ * - (B)
+ * -->
+ * ```
+ * Only meaningful on the thread's latest comment; once a human has replied,
+ * the suggestions are stale and the caller shouldn't look for them.
+ */
+export function parseQuickReplies(body: string): string[] {
+  const match = body.match(/<!--\s*Quick replies:\s*([\s\S]*?)-->/i);
+  if (!match) return [];
+  return match[1]!
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("- "))
+    .map((line) => line.slice(2).trim())
+    .filter((line) => line.length > 0);
+}
+
 export interface IssuePageParams {
   repo: string;
   issue: number;
   commentsHtml: string;
   /** The most recent comment's id, if any — written to the sidebar's client-side "read" tracking on load. */
   latestCommentId?: number;
+  /** Parsed via {@link parseQuickReplies} from the thread's latest comment, if any. */
+  quickReplies?: string[];
 }
 
 /**
@@ -194,6 +221,16 @@ export function issuePage(params: IssuePageParams): string {
   const draftHref = `/draft?repo=${encodeURIComponent(params.repo)}&issue=${params.issue}`;
   const replyLink = `<a class="btn-link" href="${escapeHtml(draftHref)}">Reply</a>`;
   const readKey = `claw-read:${params.repo}#${params.issue}`;
+  // Clicking one only pre-fills the draft form (via the existing ?body=
+  // param) — never posts directly. Two trailing newlines leave room to add
+  // to the preset text without having to type a newline first; the server
+  // trims trailing whitespace on post if that room goes unused.
+  const quickReplyLinks = (params.quickReplies ?? [])
+    .map((text) => {
+      const href = `${draftHref}&body=${encodeURIComponent(text + "\n\n")}`;
+      return `<a class="btn-link" href="${escapeHtml(href)}">${escapeHtml(text)}</a>`;
+    })
+    .join(" ");
   return `
   <style>${PAGE_STYLE}</style>
   <script async src="https://cdn.jsdelivr.net/npm/iconify-icon@2.1.0/dist/iconify-icon.min.js"></script>
@@ -202,7 +239,7 @@ export function issuePage(params: IssuePageParams): string {
   <div id="comments" data-color-mode="dark" data-dark-theme="dark"
     class="markdown-body">${params.commentsHtml}</div>
   <div id="comments-end"></div>
-  <p>${replyLink}</p>
+  <p>${replyLink}${quickReplyLinks ? " " + quickReplyLinks : ""}</p>
   <script>
 (function () {
   var container = document.getElementById("comments");

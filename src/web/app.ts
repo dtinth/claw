@@ -18,7 +18,7 @@ import { decodeSession, encodeSession, type Session } from "../session.ts";
 import { GitHubApiError, type GitHubClient } from "../github/client.ts";
 import { formatRepo, parseRepo, RepoParseError } from "../github/repo.ts";
 import type { CommentQuery, GristClient } from "../grist/client.ts";
-import { issuePage, renderCommentsHtml } from "./comment_feed.ts";
+import { issuePage, parseQuickReplies, renderCommentsHtml } from "./comment_feed.ts";
 import {
   ACTIVITY_AUTHOR,
   ACTIVITY_FETCH_LIMIT,
@@ -535,7 +535,8 @@ export function createApp(deps: AppDeps) {
     const comments = await grist.queryComments({ repo, issue });
     const commentsHtml = renderCommentsHtml(comments);
     if (partial) return c.html(commentsHtml);
-    const latestCommentId = comments.at(-1)?.commentId;
+    const latestComment = comments.at(-1);
+    const quickReplies = latestComment ? parseQuickReplies(latestComment.body) : [];
     return c.html(
       layout(
         `claw — ${repo}#${issue}`,
@@ -543,7 +544,8 @@ export function createApp(deps: AppDeps) {
           repo,
           issue,
           commentsHtml,
-          ...(latestCommentId !== undefined ? { latestCommentId } : {}),
+          ...(latestComment !== undefined ? { latestCommentId: latestComment.commentId } : {}),
+          ...(quickReplies.length > 0 ? { quickReplies } : {}),
         }),
         sidebarForSession,
       ),
@@ -575,8 +577,11 @@ export function createApp(deps: AppDeps) {
         400,
       );
     }
-    const { repo, target, body } = parsed.value;
-    if (body.trim() === "") {
+    const { repo, target } = parsed.value;
+    // Quick-reply links pre-fill a couple of trailing newlines for you to
+    // add to (see comment_feed.ts); trim them off if you didn't.
+    const body = parsed.value.body.replace(/\s+$/, "");
+    if (body === "") {
       return c.html(
         layout(
           "claw — draft",
