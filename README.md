@@ -27,7 +27,7 @@ and [bemusic/bemuse#844](https://github.com/bemusic/bemuse/issues/844).
 
 ## What it does
 
-claw is three things working together.
+claw is four things working together.
 
 ### The web dashboard
 
@@ -62,6 +62,13 @@ repositories while every agent shares the same GitHub identity.
 
 The piece of code my coding agent actually runs, to talk to the token
 broker and the comment relay (see [Agent CLI](#agent-cli) below).
+
+### The `dtinth-claw` skill
+
+Teaches a coding agent how to behave and how to use the `claw` CLI —
+[`skills/dtinth-claw/`](skills/dtinth-claw). To start working, I launch a
+session and run `/dtinth-claw` with an issue link, which gets the agent
+communicating with me on that GitHub issue.
 
 ## Configuration
 
@@ -230,3 +237,4 @@ deno task ci      # fmt --check + lint + check + test (what CI runs)
 | `src/web/` | The Hono app, routes and server-rendered views. |
 | `src/main.ts` | Wire everything together and serve. |
 | `agent/` | The standalone agent CLI (`claw token`/`exec`/`monitor`/`upload`/`setup`/`doctor`); its own `deno.json`, no import from `src/`. |
+| `skills/dtinth-claw/` | The `dtinth-claw` skill — installed by symlinking into `~/.claude/skills/`. |
