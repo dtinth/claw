@@ -815,9 +815,9 @@ function permissionPresetScript(): string {
 function dashboard(session: Session): string {
   return `
   <p>Signed in as <strong>@${escapeHtml(session.login)}</strong>.
-    <form class="inline" method="post" action="/auth/logout"><button class="secondary">Log out</button></form>
+    <form class="inline" method="post" action="/auth/logout"><button type="submit" class="link-button">Log out</button></form>
   </p>
-  <p><a href="/mint">Mint a new JWT →</a></p>`;
+  <p><a href="/mint" class="btn-link">Mint a new JWT →</a></p>`;
 }
 
 function mintPage(allowedLogin: string, baseUrl: string): string {

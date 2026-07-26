@@ -130,6 +130,16 @@ const STYLE = `
   button:active, .btn-link:active { background: linear-gradient(to bottom, #151413, #353433); }
   button:disabled { opacity: .5; cursor: not-allowed; }
   button.secondary { color: var(--fg-muted); }
+  /* The reverse of .btn-link: a <button> (kept for its form submit) that
+     should read as plain text, not a button, e.g. "Log out". */
+  button.link-button {
+    padding: 0; background: none; border: none; box-shadow: none;
+    color: var(--accent-cream); font: inherit; text-decoration: none;
+  }
+  button.link-button:hover {
+    background: none; border-color: transparent; text-decoration: underline;
+  }
+  button.link-button:active { background: none; }
   .preset-row { display: flex; gap: .4rem; flex-wrap: wrap; margin: 0 0 .6rem; }
   button.preset { padding: .3rem .6rem; font-size: .85rem; font-weight: 500; }
   .row { display: flex; gap: .75rem; align-items: flex-end; }

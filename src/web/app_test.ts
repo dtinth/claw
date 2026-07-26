@@ -122,6 +122,17 @@ Deno.test("GET / shows a minimal dashboard when logged in — just a link to /mi
   assertEquals(html.includes("Mint an intermediary JWT"), false); // that's on /mint now
 });
 
+Deno.test("dashboard styles Mint as a button and Log out as a plain link (not the reverse)", async () => {
+  const res = await makeApp(fakeGitHub()).request("/", {
+    headers: { cookie: await sessionCookie() },
+  });
+  const html = await res.text();
+  assertStringIncludes(html, 'href="/mint" class="btn-link"');
+  assertStringIncludes(html, 'class="link-button"');
+  const logoutButton = html.match(/<button[^>]*>Log out<\/button>/)?.[0] ?? "";
+  assertStringIncludes(logoutButton, "link-button");
+});
+
 Deno.test("GET /mint redirects to login when logged out", async () => {
   const res = await makeApp(fakeGitHub()).request("/mint", { redirect: "manual" });
   assertEquals(res.status, 302);
