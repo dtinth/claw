@@ -111,18 +111,34 @@ Deno.test("GET / shows a login link when logged out", async () => {
   assertStringIncludes(await res.text(), "/auth/login");
 });
 
-Deno.test("GET / shows the dashboard when logged in", async () => {
+Deno.test("GET / shows a minimal dashboard when logged in — just a link to /mint", async () => {
   const res = await makeApp(fakeGitHub()).request("/", {
     headers: { cookie: await sessionCookie() },
   });
   assertEquals(res.status, 200);
   const html = await res.text();
   assertStringIncludes(html, "dtinth");
-  assertStringIncludes(html, "Mint");
+  assertStringIncludes(html, 'href="/mint"');
+  assertEquals(html.includes("Mint an intermediary JWT"), false); // that's on /mint now
 });
 
-Deno.test("dashboard offers one-click permission presets", async () => {
-  const res = await makeApp(fakeGitHub()).request("/", {
+Deno.test("GET /mint redirects to login when logged out", async () => {
+  const res = await makeApp(fakeGitHub()).request("/mint", { redirect: "manual" });
+  assertEquals(res.status, 302);
+  assertEquals(res.headers.get("location"), "/auth/login");
+});
+
+Deno.test("GET /mint shows the mint-a-JWT form when logged in", async () => {
+  const res = await makeApp(fakeGitHub()).request("/mint", {
+    headers: { cookie: await sessionCookie() },
+  });
+  assertEquals(res.status, 200);
+  const html = await res.text();
+  assertStringIncludes(html, "Mint an intermediary JWT");
+});
+
+Deno.test("/mint offers one-click permission presets", async () => {
+  const res = await makeApp(fakeGitHub()).request("/mint", {
     headers: { cookie: await sessionCookie() },
   });
   const html = await res.text();
@@ -410,6 +426,30 @@ Deno.test("POST /jwt mints a claw JWT from the dashboard form", async () => {
   assertStringIncludes(html, "eyJ"); // a JWT
   assertStringIncludes(html, 'id="jwt-copy"'); // copy-to-clipboard button
   assertStringIncludes(html, "readonly"); // truncated, not editable
+});
+
+Deno.test("POST /jwt success and failure pages link back to /mint, not the minimal home page", async () => {
+  const form = new URLSearchParams({
+    repo: "dtinth/claw",
+    lifetime_amount: "30",
+    lifetime_unit: "days",
+    "perm_contents": "read",
+  });
+  const okRes = await makeApp(fakeGitHub()).request("/jwt", {
+    method: "POST",
+    headers: { cookie: await sessionCookie(), "content-type": "application/x-www-form-urlencoded" },
+    body: form.toString(),
+  });
+  assertStringIncludes(await okRes.text(), 'href="/mint"');
+
+  const failRes = await makeApp(fakeGitHub()).request("/jwt", {
+    method: "POST",
+    headers: { cookie: await sessionCookie(), "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ repo: "dtinth/claw", lifetime_amount: "30", lifetime_unit: "days" })
+      .toString(), // no perm_* fields => empty permissions => rejected
+  });
+  assertEquals(failRes.status, 400);
+  assertStringIncludes(await failRes.text(), 'href="/mint"');
 });
 
 Deno.test("POST /jwt redirects to login when logged out", async () => {

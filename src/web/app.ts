@@ -104,6 +104,7 @@ export function createApp(deps: AppDeps) {
     c.set("session", session);
     await next();
   };
+  app.use("/mint", requireSession);
   app.use("/jwt", requireSession);
   app.use("/draft", requireSession);
   app.use("/:owner/:repo/issues/:number", requireSession);
@@ -168,7 +169,21 @@ export function createApp(deps: AppDeps) {
     return c.html(
       layout(
         "claw — dashboard",
-        dashboard(session, config.allowedLogin, config.baseUrl),
+        dashboard(session),
+        sidebarForSession,
+      ),
+    );
+  });
+
+  // --- mint a claw JWT: its own page, so the home page stays minimal ------
+  // (mobile: the sidebar is the point of the home page, so the main content
+  // above it should be as short as possible.)
+
+  app.get("/mint", (c) => {
+    return c.html(
+      layout(
+        "claw — mint a JWT",
+        mintPage(config.allowedLogin, config.baseUrl),
         sidebarForSession,
       ),
     );
@@ -357,7 +372,7 @@ export function createApp(deps: AppDeps) {
       return c.html(
         layout(
           "claw — mint failed",
-          errorBlock(error instanceof Error ? error.message : String(error)) + backLink(),
+          errorBlock(error instanceof Error ? error.message : String(error)) + backLink("/mint"),
           sidebarForSession,
         ),
         400,
@@ -797,12 +812,16 @@ function permissionPresetScript(): string {
 </script>`;
 }
 
-function dashboard(session: Session, allowedLogin: string, baseUrl: string): string {
+function dashboard(session: Session): string {
   return `
   <p>Signed in as <strong>@${escapeHtml(session.login)}</strong>.
     <form class="inline" method="post" action="/auth/logout"><button class="secondary">Log out</button></form>
   </p>
+  <p><a href="/mint">Mint a new JWT →</a></p>`;
+}
 
+function mintPage(allowedLogin: string, baseUrl: string): string {
+  return `
   <fieldset>
     <legend><strong>Mint an intermediary JWT</strong></legend>
     <form method="post" action="/jwt">
@@ -842,7 +861,8 @@ function dashboard(session: Session, allowedLogin: string, baseUrl: string): str
   <p class="muted">An agent proposes a comment by handing you a link like
     <code>${escapeHtml(baseUrl)}/draft?repo=owner/repo&amp;issue=42&amp;body=…</code>.
     Open it to review, edit, and post the comment as yourself.</p>
-  ${permissionPresetScript()}`;
+  ${permissionPresetScript()}
+  ${backLink("/")}`;
 }
 
 function mintedTokenPage(
@@ -871,7 +891,7 @@ function mintedTokenPage(
   <p>Returns a GitHub installation token scoped to <code>${
     escapeHtml(repo)
   }</code>, valid ~1 hour. Re-request as needed.</p>
-  ${backLink()}
+  ${backLink("/mint")}
   <script>
 (function () {
   var btn = document.getElementById("jwt-copy");
