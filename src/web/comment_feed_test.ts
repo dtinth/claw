@@ -158,6 +158,11 @@ Deno.test("renderCommentsHtml uses singular wording for exactly one earlier comm
   assertStringIncludes(renderCommentsHtml(comments), "Show 1 earlier comment<");
 });
 
+Deno.test("issuePage pins <img> height to auto so a wide image with explicit width/height doesn't get squished when scaled down", () => {
+  const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "" });
+  assertStringIncludes(html, ".markdown-body img { height: auto; }");
+});
+
 Deno.test("issuePage embeds the given comments HTML and a Reply link to /draft", () => {
   const html = issuePage({ repo: "dtinth/claw", issue: 24, commentsHtml: "<p>MARKER</p>" });
   assertStringIncludes(html, "<p>MARKER</p>");

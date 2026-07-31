@@ -157,6 +157,10 @@ const PAGE_STYLE = `
   }
   .markdown-body { font-family: var(--font-sans); }
   .markdown-body code, .markdown-body pre { font-family: var(--font-mono); }
+  /* GFM's own CSS scales a wide <img width height> down via max-width:100%
+     but leaves the HTML height attribute in place, squishing it — pin
+     height to auto so the browser keeps the image's aspect ratio. */
+  .markdown-body img { height: auto; }
   .comment-card {
     border: 1px solid var(--border-weak); border-radius: var(--radius-lg);
     padding: .8rem 1rem; margin: .8rem 0; background: var(--bg-base); box-shadow: var(--shadow-offset);
