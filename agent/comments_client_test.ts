@@ -113,3 +113,22 @@ Deno.test("fetchComments throws when the response shape is unexpected", async ()
     "unexpected",
   );
 });
+
+Deno.test("fetchComments passes an abort signal that fires after timeoutMs, so a stalled connection eventually fails instead of hanging forever (regression: claw monitor silently stopped emitting comments because a hung fetch never resolved or rejected)", async () => {
+  const fn = (_url: string | URL | Request, init?: RequestInit): Promise<Response> =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => {
+        reject(new DOMException("signal timed out", "TimeoutError"));
+      });
+    });
+  const client = createCommentsClient({
+    baseUrl: "https://claw.example.com",
+    fetch: fn,
+    timeoutMs: 5,
+  });
+  const error = await assertRejects(
+    () => client.fetchComments({ jwt: "jwt", issue: 24 }),
+    CommentsClientError,
+  );
+  assertStringIncludes(error.message, "could not reach the claw server");
+});

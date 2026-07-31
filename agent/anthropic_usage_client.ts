@@ -26,9 +26,14 @@ export class AnthropicUsageError extends Error {
   }
 }
 
+/** See {@link "./comments_client.ts"} — same rationale: bound the infinite report loop's requests. */
+const DEFAULT_TIMEOUT_MS = 20_000;
+
 export interface AnthropicUsageClientDeps {
   /** Injectable fetch (defaults to the global). */
   fetch?: typeof fetch;
+  /** Per-request timeout. Defaults to {@link DEFAULT_TIMEOUT_MS}. */
+  timeoutMs?: number;
 }
 
 /**
@@ -58,6 +63,7 @@ export function createAnthropicUsageClient(
   deps: AnthropicUsageClientDeps = {},
 ): AnthropicUsageClient {
   const fetchFn = deps.fetch ?? fetch;
+  const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return {
     async fetchUsage(accessToken) {
@@ -69,6 +75,7 @@ export function createAnthropicUsageClient(
             "anthropic-beta": "oauth-2025-04-20",
             accept: "application/json",
           },
+          signal: AbortSignal.timeout(timeoutMs),
         });
       } catch (error) {
         throw new AnthropicUsageError(

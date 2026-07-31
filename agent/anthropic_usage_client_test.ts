@@ -117,3 +117,14 @@ Deno.test("fetchUsage throws a status-less AnthropicUsageError on a network fail
   const error = await assertRejects(() => client.fetchUsage("token"), AnthropicUsageError);
   assertEquals(error.status, undefined);
 });
+
+Deno.test("fetchUsage passes an abort signal that fires after timeoutMs, so a stalled connection eventually fails instead of hanging the report loop forever", async () => {
+  const fn = (_url: string | URL | Request, init?: RequestInit): Promise<Response> =>
+    new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener("abort", () => {
+        reject(new DOMException("signal timed out", "TimeoutError"));
+      });
+    });
+  const client = createAnthropicUsageClient({ fetch: fn, timeoutMs: 5 });
+  await assertRejects(() => client.fetchUsage("token"), AnthropicUsageError);
+});

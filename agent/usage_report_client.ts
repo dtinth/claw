@@ -14,11 +14,16 @@ export class UsageReportClientError extends Error {
   }
 }
 
+/** See {@link "./comments_client.ts"} — same rationale: bound the infinite report loop's requests. */
+const DEFAULT_TIMEOUT_MS = 20_000;
+
 export interface UsageReportClientDeps {
   /** claw server base URL, e.g. `https://claw.example.com`. */
   baseUrl: string;
   /** Injectable fetch (defaults to the global). */
   fetch?: typeof fetch;
+  /** Per-request timeout. Defaults to {@link DEFAULT_TIMEOUT_MS}. */
+  timeoutMs?: number;
 }
 
 export interface UsageReportClient {
@@ -28,6 +33,7 @@ export interface UsageReportClient {
 export function createUsageReportClient(deps: UsageReportClientDeps): UsageReportClient {
   const fetchFn = deps.fetch ?? fetch;
   const base = deps.baseUrl.replace(/\/$/, "");
+  const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return {
     async submit(jwt, usage) {
@@ -50,6 +56,7 @@ export function createUsageReportClient(deps: UsageReportClientDeps): UsageRepor
           method: "POST",
           headers: { authorization: `Bearer ${jwt}`, "content-type": "application/json" },
           body: JSON.stringify(body),
+          signal: AbortSignal.timeout(timeoutMs),
         });
       } catch (error) {
         throw new UsageReportClientError(

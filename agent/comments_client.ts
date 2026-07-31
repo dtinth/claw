@@ -25,11 +25,21 @@ export class CommentsClientError extends Error {
   }
 }
 
+/**
+ * A stalled connection (dead proxy, half-open TCP) leaves `fetch` pending
+ * forever — no error, no timeout by default — which for `monitor`'s
+ * infinite poll loop means the process sits alive but silently stops
+ * emitting comments. Bound every request so it fails and gets retried.
+ */
+const DEFAULT_TIMEOUT_MS = 20_000;
+
 export interface CommentsClientDeps {
   /** claw server base URL, e.g. `https://claw.example.com`. */
   baseUrl: string;
   /** Injectable fetch (defaults to the global). */
   fetch?: typeof fetch;
+  /** Per-request timeout. Defaults to {@link DEFAULT_TIMEOUT_MS}. */
+  timeoutMs?: number;
 }
 
 export interface FetchCommentsParams {
@@ -46,6 +56,7 @@ export interface CommentsClient {
 export function createCommentsClient(deps: CommentsClientDeps): CommentsClient {
   const fetchFn = deps.fetch ?? fetch;
   const base = deps.baseUrl.replace(/\/$/, "");
+  const timeoutMs = deps.timeoutMs ?? DEFAULT_TIMEOUT_MS;
 
   return {
     async fetchComments({ jwt, issue, authors }) {
@@ -57,6 +68,7 @@ export function createCommentsClient(deps: CommentsClientDeps): CommentsClient {
       try {
         response = await fetchFn(url.toString(), {
           headers: { authorization: `Bearer ${jwt}` },
+          signal: AbortSignal.timeout(timeoutMs),
         });
       } catch (error) {
         throw new CommentsClientError(
