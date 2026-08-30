@@ -21,6 +21,15 @@ Deno.test("layout renders a plain single column without a sidebar", () => {
   assertEquals(html.includes('<aside class="app-sidebar">'), false);
 });
 
+Deno.test("layout's mobile breakpoint forces .app-main to the viewport width (regression: a wide <pre> made the whole page scroll horizontally on mobile)", () => {
+  const html = layout("t", "<p>BODY</p>", "<p>SIDEBAR</p>");
+  const mediaBlock = html.slice(html.indexOf("@media (max-width: 700px)"));
+  assertStringIncludes(
+    mediaBlock.slice(0, mediaBlock.indexOf("}", mediaBlock.indexOf(".app-main"))),
+    "width: 100%",
+  );
+});
+
 Deno.test("layout wraps body and sidebar in the app shell when a sidebar is given", () => {
   const html = layout("t", "<p>BODY</p>", "<p>SIDEBAR</p>");
   assertStringIncludes(html, 'class="app-shell"');

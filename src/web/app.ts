@@ -1010,7 +1010,7 @@ function postedPage(
 ): string {
   const anchor = commentId !== undefined ? `#issuecomment-${commentId}` : "";
   const viewerLink = target.kind === "issue"
-    ? `<p><a href="/${
+    ? `<p><a class="btn-link" href="/${
       escapeHtml(repo)
     }/issues/${target.issueNumber}${anchor}">View in claw's comment feed →</a></p>`
     : "";

@@ -793,6 +793,8 @@ Deno.test("POST /draft's success page links to claw's own comment feed for an is
   // of having to scroll to find it.
   assertStringIncludes(html, 'href="/dtinth/claw/issues/5#issuecomment-1"');
   assertStringIncludes(html, "localStorage.removeItem"); // clears the persisted draft on success
+  // Styled as a button, not a plain link.
+  assertStringIncludes(html, 'class="btn-link" href="/dtinth/claw/issues/5#issuecomment-1"');
 });
 
 Deno.test("POST /draft's success page has no comment-feed link for a discussion (not relayed)", async () => {

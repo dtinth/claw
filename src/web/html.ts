@@ -85,7 +85,11 @@ const STYLE = `
       flex: none; width: 100%; height: auto; position: static;
       border-right: none; border-bottom: 1px solid var(--border-weak); order: 2;
     }
-    .app-main { order: 1; }
+    /* .app-shell's align-items: flex-start makes a column-direction flex
+       item shrink-fit its widest content (a wide <pre>) instead of filling
+       the viewport, so wide code blocks push the whole page wider than the
+       screen on mobile — force it to the container's width instead. */
+    .app-main { order: 1; width: 100%; min-width: 0; }
   }
   header { display: flex; align-items: baseline; justify-content: space-between; gap: 1rem; }
   h1 {
