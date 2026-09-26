@@ -8,19 +8,22 @@
  */
 import { clearCache } from "./cache.ts";
 import { defaultClaudeCredentialsPath } from "./claude_credentials.ts";
+import { createCommentsClient } from "./comments_client.ts";
 import { loadConfigOrEmpty, setBaseUrl } from "./config_store.ts";
 import { findGrant, loadGrants, upsertGrant } from "./grants.ts";
 import { decodeClawJwtPayload } from "./jwt_decode.ts";
 import { basename, readLocalFile } from "./local_file.ts";
-import { runMonitorLoop } from "./monitor.ts";
+import { filterComments, runLongPoll } from "./read.ts";
 import { type Paths, resolvePaths } from "./paths.ts";
 import { resolveRepo } from "./resolve_repo.ts";
 import { getToken } from "./token.ts";
 import { createUploadClient } from "./upload_client.ts";
 import { runUsageReportLoop } from "./usage_loop.ts";
 
-const MONITOR_USAGE =
-  "usage: claw monitor <issue> [--repo owner/repo] [--authors a,b] [--interval 10]";
+const READ_USAGE =
+  "usage: claw read <issue> [--repo owner/repo] [--authors a,b] [--after id] [--before id]";
+const LONG_POLL_USAGE =
+  "usage: claw long-poll <issue> [--repo owner/repo] [--authors a,b] [--after id] [--before id] [--interval 10]";
 const UPLOAD_USAGE =
   "usage: claw upload <path> [--repo owner/repo] [--keep-filename | --filename name]";
 const USAGE_REPORT_USAGE = "usage: claw usage-report [--interval 60]";
@@ -32,8 +35,10 @@ Usage:
   claw set server <url>                 Save the claw server URL (or print it, with no <url>)
   claw token [--repo owner/repo]        Print a token for the repo (mint or reuse the cache)
   claw exec [--repo owner/repo] -- CMD  Run CMD with GH_TOKEN and CLAW_REPO set
-  claw monitor <issue> [--repo owner/repo] [--authors a,b] [--interval 10]
-                                         Poll for new comments on one issue/PR, one JSON per line
+  claw read <issue> [--repo owner/repo] [--authors a,b] [--after id] [--before id]
+                                         Print currently-relayed comments once, one JSON per line
+  claw long-poll <issue> [--repo owner/repo] [--authors a,b] [--after id] [--interval 10]
+                                         Block until a comment after --after arrives, then print and exit
   claw upload <path> [--repo owner/repo] [--keep-filename | --filename name]
                                          Upload a file, print its public URL
   claw usage-report [--interval 60]     Poll Claude Code's usage and report it to claw
@@ -74,7 +79,7 @@ export interface Runtime {
   ) => Promise<{ code: number }>;
   /** Read a single line from stdin (used by `claw grant` when no token is given as an arg). */
   readLine: () => Promise<string>;
-  /** Delay for the given milliseconds (used by `claw monitor`'s poll loop). */
+  /** Delay for the given milliseconds (used by `claw long-poll`'s poll loop). */
   sleep: (ms: number) => Promise<void>;
 }
 
@@ -204,17 +209,22 @@ async function cmdSet(args: string[], rt: Runtime): Promise<number> {
   return 0;
 }
 
-interface MonitorArgs {
+interface ReadLikeArgs {
   issue?: number;
   repo?: string;
   authors?: string[];
+  after?: number;
+  before?: number;
   intervalSeconds?: number;
   error?: string;
 }
 
-function parseMonitorArgs(args: string[]): MonitorArgs {
+/** Shared by `read` and `long-poll` — `allowInterval` is false for `read`, which never waits. */
+function parseReadLikeArgs(args: string[], usage: string, allowInterval: boolean): ReadLikeArgs {
   let repo: string | undefined;
   let authors: string[] | undefined;
+  let after: number | undefined;
+  let before: number | undefined;
   let intervalSeconds: number | undefined;
   const positional: string[] = [];
 
@@ -228,9 +238,17 @@ function parseMonitorArgs(args: string[]): MonitorArgs {
       authors = (args[++i] ?? "").split(",").map((a) => a.trim()).filter(Boolean);
     } else if (arg.startsWith("--authors=")) {
       authors = arg.slice("--authors=".length).split(",").map((a) => a.trim()).filter(Boolean);
-    } else if (arg === "--interval") {
+    } else if (arg === "--after") {
+      after = Number(args[++i]);
+    } else if (arg.startsWith("--after=")) {
+      after = Number(arg.slice("--after=".length));
+    } else if (arg === "--before") {
+      before = Number(args[++i]);
+    } else if (arg.startsWith("--before=")) {
+      before = Number(arg.slice("--before=".length));
+    } else if (allowInterval && arg === "--interval") {
       intervalSeconds = Number(args[++i]);
-    } else if (arg.startsWith("--interval=")) {
+    } else if (allowInterval && arg.startsWith("--interval=")) {
       intervalSeconds = Number(arg.slice("--interval=".length));
     } else {
       positional.push(arg);
@@ -240,7 +258,13 @@ function parseMonitorArgs(args: string[]): MonitorArgs {
   const issueRaw = positional[0];
   const issue = issueRaw !== undefined ? Number(issueRaw) : NaN;
   if (issueRaw === undefined || !Number.isInteger(issue) || issue <= 0) {
-    return { error: MONITOR_USAGE };
+    return { error: usage };
+  }
+  if (after !== undefined && (!Number.isInteger(after) || after <= 0)) {
+    return { error: "claw: --after must be a positive comment id" };
+  }
+  if (before !== undefined && (!Number.isInteger(before) || before <= 0)) {
+    return { error: "claw: --before must be a positive comment id" };
   }
   if (
     intervalSeconds !== undefined && (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0)
@@ -252,14 +276,47 @@ function parseMonitorArgs(args: string[]): MonitorArgs {
     issue,
     ...(repo !== undefined ? { repo } : {}),
     ...(authors !== undefined ? { authors } : {}),
+    ...(after !== undefined ? { after } : {}),
+    ...(before !== undefined ? { before } : {}),
     ...(intervalSeconds !== undefined ? { intervalSeconds } : {}),
   };
 }
 
-async function cmdMonitor(args: string[], rt: Runtime): Promise<number> {
-  const parsed = parseMonitorArgs(args);
+async function cmdRead(args: string[], rt: Runtime): Promise<number> {
+  const parsed = parseReadLikeArgs(args, READ_USAGE, false);
   if (parsed.error || parsed.issue === undefined) {
-    rt.stderr((parsed.error ?? MONITOR_USAGE) + "\n");
+    rt.stderr((parsed.error ?? READ_USAGE) + "\n");
+    return 1;
+  }
+
+  const context = await resolveContext(parsed.repo, rt);
+  const jwt = findGrant(context.grants, context.repo);
+  const client = createCommentsClient({ baseUrl: context.baseUrl, fetch: rt.fetch });
+
+  try {
+    const comments = await client.fetchComments({
+      jwt,
+      issue: parsed.issue,
+      ...(parsed.authors ? { authors: parsed.authors } : {}),
+    });
+    const matched = filterComments(comments, {
+      ...(parsed.after !== undefined ? { after: parsed.after } : {}),
+      ...(parsed.before !== undefined ? { before: parsed.before } : {}),
+    });
+    for (const comment of matched) {
+      rt.stdout(JSON.stringify(comment) + "\n");
+    }
+    return 0;
+  } catch (error) {
+    rt.stderr(`claw read: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+async function cmdLongPoll(args: string[], rt: Runtime): Promise<number> {
+  const parsed = parseReadLikeArgs(args, LONG_POLL_USAGE, true);
+  if (parsed.error || parsed.issue === undefined) {
+    rt.stderr((parsed.error ?? LONG_POLL_USAGE) + "\n");
     return 1;
   }
 
@@ -267,28 +324,35 @@ async function cmdMonitor(args: string[], rt: Runtime): Promise<number> {
   const jwt = findGrant(context.grants, context.repo);
   const intervalMs = (parsed.intervalSeconds ?? 10) * 1000;
 
-  rt.stderr(
-    `claw monitor: watching ${context.repo}#${parsed.issue} every ${
-      intervalMs / 1000
-    }s (Ctrl-C to stop)...\n`,
-  );
-
   try {
-    await runMonitorLoop({
+    const comments = await runLongPoll({
       baseUrl: context.baseUrl,
       jwt,
       issue: parsed.issue,
       ...(parsed.authors ? { authors: parsed.authors } : {}),
+      ...(parsed.after !== undefined ? { after: parsed.after } : {}),
+      ...(parsed.before !== undefined ? { before: parsed.before } : {}),
       intervalMs,
       fetch: rt.fetch,
-      stdout: rt.stdout,
       stderr: rt.stderr,
       sleep: rt.sleep,
     });
+    for (const comment of comments) {
+      rt.stdout(JSON.stringify(comment) + "\n");
+    }
     return 0;
   } catch {
     return 1;
   }
+}
+
+/** `claw monitor` is removed — long-poll's one foreground call replaces the Monitor-tool wrapper it needed. */
+function cmdMonitor(rt: Runtime): number {
+  rt.stderr(
+    "claw monitor: removed. Use `claw read <issue>` to fetch once (note the last commentId), " +
+      "then `claw long-poll <issue> --after <id>` to block until the next comment and exit.\n",
+  );
+  return 1;
 }
 
 interface UsageReportArgs {
@@ -609,8 +673,12 @@ export async function runCli(argv: string[], rt: Runtime): Promise<number> {
         return await cmdGrant(rest, rt);
       case "set":
         return await cmdSet(rest, rt);
+      case "read":
+        return await cmdRead(rest, rt);
+      case "long-poll":
+        return await cmdLongPoll(rest, rt);
       case "monitor":
-        return await cmdMonitor(rest, rt);
+        return cmdMonitor(rt);
       case "upload":
         return await cmdUpload(rest, rt);
       case "usage-report":

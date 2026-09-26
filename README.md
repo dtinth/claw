@@ -154,30 +154,37 @@ shell session: `GH_TOKEN` is a snapshot and doesn't renew mid-session.
 
 ### Watching for comments
 
-`claw monitor <issue>` polls claw's comment relay for one issue/PR and prints
-each new comment as a single JSON line — a jsonl stream meant to feed a
-long-running watcher (e.g. Claude Code's `Monitor` tool, which treats each
-stdout line as an event):
+`claw read <issue>` fetches claw's comment relay for one issue/PR once and
+prints each matching comment as a single JSON line, then exits. `claw
+long-poll <issue> --after <id>` does the same fetch, but blocks — retrying
+on an interval — until a comment newer than `<id>` shows up, then prints it
+and exits. The pair replaces a `monitor`-style unbounded watcher: `read`
+finds the last comment's id, then `long-poll --after <that id>` waits for
+the next one, all inside one foreground command your agent just runs and
+blocks on — no separate background-watch primitive (like Claude Code's
+`Monitor` tool, which caps a watch at 30 minutes) required from the host:
 
 ```sh
-claw monitor 24                          # poll dtinth/claw#24 every 10s (default)
-claw monitor 24 --interval 30            # slower polling
-claw monitor 24 --authors dtinth         # only comments from these logins
+claw read 24 --authors dtinth                       # everything so far from these logins
+claw read 24 --after 5033663115                     # only comments newer than this id
+claw long-poll 24 --authors dtinth --after 5033663115   # block until the next one, then exit
+claw long-poll 24 --after 5033663115 --interval 30      # slower polling while waiting
 ```
 
-Unlike `token`/`exec`, this doesn't mint an installation token — `/api/comments`
-accepts the claw JWT directly, so `monitor` just reads it straight from the
-grants file. Status and errors go to stderr only, never stdout, so the jsonl
-stream stays clean; a transient failure (network blip, 5xx) is logged and
-retried, never crashes the process, but an invalid/expired JWT (401) or a
-relay that isn't configured on the server (503) exits — those won't fix
-themselves by retrying.
+Unlike `token`/`exec`, neither mints an installation token — `/api/comments`
+accepts the claw JWT directly, so both just read it straight from the grants
+file. Status and errors go to stderr only, never stdout, so the jsonl stream
+stays clean; a transient failure (network blip, 5xx) is logged and retried
+(by `long-poll`; `read` is one-shot and simply fails), never crashes the
+process, but an invalid/expired JWT (401) or a relay that isn't configured
+on the server (503) exits — those won't fix themselves by retrying.
 
-`monitor` is stateless: the first poll of a run emits every comment already
-there (you just started watching, you want the context), and later polls in
-that same run only emit new arrivals — but nothing is written to disk, so a
-restart re-emits the current backlog rather than resuming from where it left
-off.
+Both are stateless: nothing is written to disk, and `commentId` bounds
+(`--after`/`--before`) are the only cursor — the caller (your agent) is
+responsible for remembering the last id it saw.
+
+`claw monitor` is removed; running it prints a message pointing at `read`/
+`long-poll` and exits 1.
 
 ### Uploading a file
 
@@ -197,8 +204,8 @@ extensions get `image`, everything else gets `file`) rather than the local
 name — the object key already has the content's CID as a path segment
 (`ipfs/<cid>/<filename>`), so the filename itself doesn't need to be unique,
 just a sensible extension. `--keep-filename` and `--filename` are mutually
-exclusive. Like `monitor`, this authenticates with the claw JWT directly, no
-installation token minted.
+exclusive. Like `read`/`long-poll`, this authenticates with the claw JWT
+directly, no installation token minted.
 
 ## Deployment
 
@@ -236,5 +243,5 @@ deno task ci      # fmt --check + lint + check + test (what CI runs)
 | `src/storage/` | CID calculation, S3-compatible storage, and the `/api/upload` orchestration. |
 | `src/web/` | The Hono app, routes and server-rendered views. |
 | `src/main.ts` | Wire everything together and serve. |
-| `agent/` | The standalone agent CLI (`claw token`/`exec`/`monitor`/`upload`/`setup`/`doctor`); its own `deno.json`, no import from `src/`. |
+| `agent/` | The standalone agent CLI (`claw token`/`exec`/`read`/`long-poll`/`upload`/`setup`/`doctor`); its own `deno.json`, no import from `src/`. |
 | `skills/dtinth-claw/` | The `dtinth-claw` skill — installed by symlinking into `~/.claude/skills/`. |

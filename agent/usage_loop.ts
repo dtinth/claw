@@ -4,7 +4,7 @@
  * and submit it to claw under whichever grant expires furthest out (the
  * usage meter isn't tied to a specific repo, so any valid grant works).
  *
- * Mirrors `monitor.ts`'s shape: real filesystem reads happen directly
+ * Mirrors `read.ts`'s `runLongPoll` shape: real filesystem reads happen directly
  * (grants file, credentials file — same exception the rest of this CLI
  * makes), network calls go through injectable `fetch`, and a transient
  * failure is logged and retried rather than ending the process.

@@ -432,46 +432,55 @@ Deno.test("exec: requires a -- separator", async () => {
   assertStringIncludes(stderr.join(""), "usage");
 });
 
-// --- claw monitor --------------------------------------------------------
+// --- claw monitor (removed) ------------------------------------------------
+
+Deno.test("monitor: removed, points at read/long-poll instead", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["monitor", "24"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "claw read");
+  assertStringIncludes(stderr.join(""), "claw long-poll");
+});
+
+// --- claw read ---------------------------------------------------------------
 //
-// Only the fast-fail validation paths are covered here (the CLI dispatch
-// layer's job); the actual poll loop is monitor_test.ts's job, exercised
-// directly against runMonitorLoop with a bounded shouldStop.
+// Only the fast-fail validation paths and the one-shot fetch are covered
+// here; filterComments's own boundary behavior is read_test.ts's job.
 
-Deno.test("monitor: requires an issue number", async () => {
+Deno.test("read: requires an issue number", async () => {
   const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
-  const code = await runCli(["monitor"], rt);
+  const code = await runCli(["read"], rt);
   assertEquals(code, 1);
   assertStringIncludes(stderr.join(""), "usage");
 });
 
-Deno.test("monitor: rejects a non-numeric issue", async () => {
+Deno.test("read: rejects a non-numeric issue", async () => {
   const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
-  const code = await runCli(["monitor", "not-a-number"], rt);
+  const code = await runCli(["read", "not-a-number"], rt);
   assertEquals(code, 1);
   assertStringIncludes(stderr.join(""), "usage");
 });
 
-Deno.test("monitor: fails cleanly when no claw server is configured", async () => {
+Deno.test("read: fails cleanly when no claw server is configured", async () => {
   const { rt, stderr } = makeFakeRuntime({
     env: { HOME: "/home/dtinth", CLAW_REPO: "dtinth/claw" },
   });
-  const code = await runCli(["monitor", "24"], rt);
+  const code = await runCli(["read", "24"], rt);
   assertEquals(code, 1);
   assertStringIncludes(stderr.join(""), "CLAW_BASE_URL");
 });
 
-Deno.test("monitor: fails cleanly when no repo can be resolved", async () => {
+Deno.test("read: fails cleanly when no repo can be resolved", async () => {
   const { rt, stderr } = makeFakeRuntime({
     env: { HOME: "/home/dtinth", CLAW_BASE_URL: "https://claw.example.com" },
     commandOutputs: { "git remote get-url origin": { code: 1 } },
   });
-  const code = await runCli(["monitor", "24"], rt);
+  const code = await runCli(["read", "24"], rt);
   assertEquals(code, 1);
   assertStringIncludes(stderr.join(""), "repository");
 });
 
-Deno.test("monitor: fails cleanly when there is no grant for the repo", async () => {
+Deno.test("read: fails cleanly when there is no grant for the repo", async () => {
   const configDir = await Deno.makeTempDir();
   // grants.json deliberately has no entry for dtinth/claw.
   await Deno.writeTextFile(`${configDir}/grants.json`, JSON.stringify({}));
@@ -484,16 +493,117 @@ Deno.test("monitor: fails cleanly when there is no grant for the repo", async ()
       CLAW_CACHE_DIR: await Deno.makeTempDir(),
     },
   });
-  const code = await runCli(["monitor", "24"], rt);
+  const code = await runCli(["read", "24"], rt);
   assertEquals(code, 1);
   assertStringIncludes(stderr.join(""), "no grant for dtinth/claw");
 });
 
-Deno.test("monitor: rejects a non-positive --interval", async () => {
+Deno.test("read: rejects a non-positive --after", async () => {
   const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
-  const code = await runCli(["monitor", "24", "--interval", "0"], rt);
+  const code = await runCli(["read", "24", "--after", "0"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "--after");
+});
+
+Deno.test("read: prints each matching comment as one JSON line, then exits", async () => {
+  const configDir = await Deno.makeTempDir();
+  await Deno.writeTextFile(
+    `${configDir}/grants.json`,
+    JSON.stringify({ "dtinth/claw": "the.jwt" }),
+  );
+  const comment = {
+    commentId: 5,
+    repo: "dtinth/claw",
+    issue: 24,
+    author: "dtinth",
+    authorId: 1,
+    body: "hi",
+    url: "https://github.com/dtinth/claw/issues/24#issuecomment-5",
+  };
+  const { rt, stdout } = makeFakeRuntime({
+    env: {
+      HOME: "/home/dtinth",
+      CLAW_BASE_URL: "https://claw.example.com",
+      CLAW_REPO: "dtinth/claw",
+      CLAW_CONFIG_DIR: configDir,
+      CLAW_CACHE_DIR: await Deno.makeTempDir(),
+    },
+    fetchHandler: () => jsonResponse({ comments: [comment] }),
+  });
+  const code = await runCli(["read", "24", "--after", "1"], rt);
+  assertEquals(code, 0);
+  assertEquals(stdout, [JSON.stringify(comment) + "\n"]);
+});
+
+// --- claw long-poll ------------------------------------------------------
+//
+// Only the fast-fail validation paths are covered here (the CLI dispatch
+// layer's job); the actual poll loop is read_test.ts's job, exercised
+// directly against runLongPoll with a bounded shouldStop.
+
+Deno.test("long-poll: requires an issue number", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["long-poll"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "usage");
+});
+
+Deno.test("long-poll: rejects a non-numeric issue", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["long-poll", "not-a-number"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "usage");
+});
+
+Deno.test("long-poll: fails cleanly when no claw server is configured", async () => {
+  const { rt, stderr } = makeFakeRuntime({
+    env: { HOME: "/home/dtinth", CLAW_REPO: "dtinth/claw" },
+  });
+  const code = await runCli(["long-poll", "24"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "CLAW_BASE_URL");
+});
+
+Deno.test("long-poll: fails cleanly when no repo can be resolved", async () => {
+  const { rt, stderr } = makeFakeRuntime({
+    env: { HOME: "/home/dtinth", CLAW_BASE_URL: "https://claw.example.com" },
+    commandOutputs: { "git remote get-url origin": { code: 1 } },
+  });
+  const code = await runCli(["long-poll", "24"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "repository");
+});
+
+Deno.test("long-poll: fails cleanly when there is no grant for the repo", async () => {
+  const configDir = await Deno.makeTempDir();
+  // grants.json deliberately has no entry for dtinth/claw.
+  await Deno.writeTextFile(`${configDir}/grants.json`, JSON.stringify({}));
+  const { rt, stderr } = makeFakeRuntime({
+    env: {
+      HOME: "/home/dtinth",
+      CLAW_BASE_URL: "https://claw.example.com",
+      CLAW_REPO: "dtinth/claw",
+      CLAW_CONFIG_DIR: configDir,
+      CLAW_CACHE_DIR: await Deno.makeTempDir(),
+    },
+  });
+  const code = await runCli(["long-poll", "24"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "no grant for dtinth/claw");
+});
+
+Deno.test("long-poll: rejects a non-positive --interval", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["long-poll", "24", "--interval", "0"], rt);
   assertEquals(code, 1);
   assertStringIncludes(stderr.join(""), "--interval");
+});
+
+Deno.test("long-poll: rejects a non-positive --after", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["long-poll", "24", "--after", "-1"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "--after");
 });
 
 // --- claw usage-report -------------------------------------------------------
