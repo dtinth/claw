@@ -44,18 +44,27 @@ export interface RunLongPollParams extends FilterBounds {
   issue: number;
   authors?: string[];
   intervalMs: number;
+  /**
+   * Give up (returning no comments) once this many milliseconds have
+   * elapsed, rather than waiting forever — for a harness that can't run a
+   * background command indefinitely. Undefined (the default) never gives up.
+   */
+  timeoutMs?: number;
   fetch?: typeof fetch;
   stderr: (text: string) => void;
   sleep: (ms: number) => Promise<void>;
+  /** Wall clock, for `timeoutMs`. Defaults to `Date.now`; only tests override it. */
+  now?: () => number;
   /** Returns true to give up empty-handed. Defaults to never giving up; only tests bound iterations. */
   shouldStop?: () => boolean;
 }
 
 /**
  * Poll until at least one comment matches the given bounds, then return the
- * matches. A 4xx response (bad/expired JWT, relay disabled) is treated as
- * fatal and rethrown — retrying can't fix it. Anything else (5xx, network
- * errors) is logged to stderr and the loop keeps polling.
+ * matches — or, if `timeoutMs` elapses first, return an empty array. A 4xx
+ * response (bad/expired JWT, relay disabled) is treated as fatal and
+ * rethrown — retrying can't fix it. Anything else (5xx, network errors) is
+ * logged to stderr and the loop keeps polling.
  */
 export async function runLongPoll(params: RunLongPollParams): Promise<RelayedComment[]> {
   const client = createCommentsClient({
@@ -66,6 +75,8 @@ export async function runLongPoll(params: RunLongPollParams): Promise<RelayedCom
     ...(params.after !== undefined ? { after: params.after } : {}),
     ...(params.before !== undefined ? { before: params.before } : {}),
   };
+  const now = params.now ?? Date.now;
+  const deadline = params.timeoutMs !== undefined ? now() + params.timeoutMs : undefined;
 
   while (!(params.shouldStop?.() ?? false)) {
     try {
@@ -91,6 +102,7 @@ export async function runLongPoll(params: RunLongPollParams): Promise<RelayedCom
         }\n`,
       );
     }
+    if (deadline !== undefined && now() >= deadline) return [];
     await params.sleep(params.intervalMs);
   }
   return [];

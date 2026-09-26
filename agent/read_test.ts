@@ -191,6 +191,61 @@ Deno.test("runLongPoll forwards the authors filter to each poll", async () => {
   assertEquals(seenAuthors, ["dtinth,alice"]);
 });
 
+function fakeClock(startMs: number) {
+  let t = startMs;
+  return { now: () => t, sleep: (ms: number) => (t += ms, Promise.resolve()) };
+}
+
+Deno.test("runLongPoll gives up empty-handed once timeoutMs elapses with no match", async () => {
+  const clock = fakeClock(0);
+  let fetchCalls = 0;
+  const fetchFn = () => {
+    fetchCalls++;
+    return Promise.resolve(jsonResponse({ comments: [] }));
+  };
+
+  const result = await runLongPoll({
+    baseUrl: "https://claw.example.com",
+    jwt: "the.jwt",
+    issue: 24,
+    after: 0,
+    intervalMs: 1_000,
+    timeoutMs: 2_000,
+    fetch: fetchFn,
+    stderr: () => {},
+    sleep: clock.sleep,
+    now: clock.now,
+  });
+
+  assertEquals(result, []);
+  assertEquals(fetchCalls, 3); // polls at t=0, 1000, 2000, then gives up
+});
+
+Deno.test("runLongPoll returns a match found just before timeoutMs would have elapsed", async () => {
+  const clock = fakeClock(0);
+  let call = 0;
+  const fetchFn = () => {
+    call++;
+    const comments = call < 2 ? [] : [comment(1)];
+    return Promise.resolve(jsonResponse({ comments }));
+  };
+
+  const result = await runLongPoll({
+    baseUrl: "https://claw.example.com",
+    jwt: "the.jwt",
+    issue: 24,
+    after: 0,
+    intervalMs: 1_000,
+    timeoutMs: 5_000,
+    fetch: fetchFn,
+    stderr: () => {},
+    sleep: clock.sleep,
+    now: clock.now,
+  });
+
+  assertEquals(result, [comment(1)]);
+});
+
 Deno.test("runLongPoll's --before also bounds which comments count as a match", async () => {
   const { sleep } = collectingSleep();
   let call = 0;

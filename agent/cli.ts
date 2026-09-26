@@ -23,7 +23,7 @@ import { runUsageReportLoop } from "./usage_loop.ts";
 const READ_USAGE =
   "usage: claw read <issue> [--repo owner/repo] [--authors a,b] [--after id] [--before id]";
 const LONG_POLL_USAGE =
-  "usage: claw long-poll <issue> [--repo owner/repo] [--authors a,b] [--after id] [--before id] [--interval 10]";
+  "usage: claw long-poll <issue> [--repo owner/repo] [--authors a,b] [--after id] [--before id] [--interval 10] [--timeout seconds]";
 const UPLOAD_USAGE =
   "usage: claw upload <path> [--repo owner/repo] [--keep-filename | --filename name]";
 const USAGE_REPORT_USAGE = "usage: claw usage-report [--interval 60]";
@@ -37,8 +37,9 @@ Usage:
   claw exec [--repo owner/repo] -- CMD  Run CMD with GH_TOKEN and CLAW_REPO set
   claw read <issue> [--repo owner/repo] [--authors a,b] [--after id] [--before id]
                                          Print currently-relayed comments once, one JSON per line
-  claw long-poll <issue> [--repo owner/repo] [--authors a,b] [--after id] [--interval 10]
+  claw long-poll <issue> [--repo owner/repo] [--authors a,b] [--after id] [--interval 10] [--timeout secs]
                                          Block until a comment after --after arrives, then print and exit
+                                         (with --timeout, gives up and exits 0 after that many seconds)
   claw upload <path> [--repo owner/repo] [--keep-filename | --filename name]
                                          Upload a file, print its public URL
   claw usage-report [--interval 60]     Poll Claude Code's usage and report it to claw
@@ -216,16 +217,18 @@ interface ReadLikeArgs {
   after?: number;
   before?: number;
   intervalSeconds?: number;
+  timeoutSeconds?: number;
   error?: string;
 }
 
-/** Shared by `read` and `long-poll` — `allowInterval` is false for `read`, which never waits. */
-function parseReadLikeArgs(args: string[], usage: string, allowInterval: boolean): ReadLikeArgs {
+/** Shared by `read` and `long-poll` — `isLongPoll` gates `--interval`/`--timeout`, meaningless for `read`, which never waits. */
+function parseReadLikeArgs(args: string[], usage: string, isLongPoll: boolean): ReadLikeArgs {
   let repo: string | undefined;
   let authors: string[] | undefined;
   let after: number | undefined;
   let before: number | undefined;
   let intervalSeconds: number | undefined;
+  let timeoutSeconds: number | undefined;
   const positional: string[] = [];
 
   for (let i = 0; i < args.length; i++) {
@@ -246,10 +249,14 @@ function parseReadLikeArgs(args: string[], usage: string, allowInterval: boolean
       before = Number(args[++i]);
     } else if (arg.startsWith("--before=")) {
       before = Number(arg.slice("--before=".length));
-    } else if (allowInterval && arg === "--interval") {
+    } else if (isLongPoll && arg === "--interval") {
       intervalSeconds = Number(args[++i]);
-    } else if (allowInterval && arg.startsWith("--interval=")) {
+    } else if (isLongPoll && arg.startsWith("--interval=")) {
       intervalSeconds = Number(arg.slice("--interval=".length));
+    } else if (isLongPoll && arg === "--timeout") {
+      timeoutSeconds = Number(args[++i]);
+    } else if (isLongPoll && arg.startsWith("--timeout=")) {
+      timeoutSeconds = Number(arg.slice("--timeout=".length));
     } else {
       positional.push(arg);
     }
@@ -271,6 +278,11 @@ function parseReadLikeArgs(args: string[], usage: string, allowInterval: boolean
   ) {
     return { error: `claw: --interval must be a positive number of seconds` };
   }
+  if (
+    timeoutSeconds !== undefined && (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0)
+  ) {
+    return { error: `claw: --timeout must be a positive number of seconds` };
+  }
 
   return {
     issue,
@@ -279,6 +291,7 @@ function parseReadLikeArgs(args: string[], usage: string, allowInterval: boolean
     ...(after !== undefined ? { after } : {}),
     ...(before !== undefined ? { before } : {}),
     ...(intervalSeconds !== undefined ? { intervalSeconds } : {}),
+    ...(timeoutSeconds !== undefined ? { timeoutSeconds } : {}),
   };
 }
 
@@ -332,11 +345,16 @@ async function cmdLongPoll(args: string[], rt: Runtime): Promise<number> {
       ...(parsed.authors ? { authors: parsed.authors } : {}),
       ...(parsed.after !== undefined ? { after: parsed.after } : {}),
       ...(parsed.before !== undefined ? { before: parsed.before } : {}),
+      ...(parsed.timeoutSeconds !== undefined ? { timeoutMs: parsed.timeoutSeconds * 1000 } : {}),
       intervalMs,
       fetch: rt.fetch,
       stderr: rt.stderr,
       sleep: rt.sleep,
+      now: () => rt.now().getTime(),
     });
+    if (comments.length === 0 && parsed.timeoutSeconds !== undefined) {
+      rt.stderr(`claw long-poll: no new comments after ${parsed.timeoutSeconds}s\n`);
+    }
     for (const comment of comments) {
       rt.stdout(JSON.stringify(comment) + "\n");
     }

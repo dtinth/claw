@@ -606,6 +606,13 @@ Deno.test("long-poll: rejects a non-positive --after", async () => {
   assertStringIncludes(stderr.join(""), "--after");
 });
 
+Deno.test("long-poll: rejects a non-positive --timeout", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["long-poll", "24", "--timeout", "0"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "--timeout");
+});
+
 // --- claw usage-report -------------------------------------------------------
 //
 // Only the fast-fail validation paths are covered here, same reasoning as

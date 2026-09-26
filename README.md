@@ -169,6 +169,7 @@ claw read 24 --authors dtinth                       # everything so far from the
 claw read 24 --after 5033663115                     # only comments newer than this id
 claw long-poll 24 --authors dtinth --after 5033663115   # block until the next one, then exit
 claw long-poll 24 --after 5033663115 --interval 30      # slower polling while waiting
+claw long-poll 24 --after 5033663115 --timeout 300      # give up (exit 0) after 5 minutes
 ```
 
 Unlike `token`/`exec`, neither mints an installation token — `/api/comments`
@@ -181,7 +182,14 @@ on the server (503) exits — those won't fix themselves by retrying.
 
 Both are stateless: nothing is written to disk, and `commentId` bounds
 (`--after`/`--before`) are the only cursor — the caller (your agent) is
-responsible for remembering the last id it saw.
+responsible for remembering the last id it saw. No comment is ever lost
+between two `long-poll` runs, since each run re-fetches the full backlog
+and filters client-side rather than resuming from a saved position.
+
+`--timeout <seconds>` bounds how long `long-poll` waits: past that, it exits
+0 having printed nothing, after logging `no new comments after Ns` to
+stderr — useful for a host that can't background a command indefinitely;
+restart with the same `--after` id.
 
 `claw monitor` is removed; running it prints a message pointing at `read`/
 `long-poll` and exits 1.
