@@ -13,7 +13,12 @@ import { loadConfigOrEmpty, setBaseUrl } from "./config_store.ts";
 import { findGrant, loadGrants, upsertGrant } from "./grants.ts";
 import { decodeClawJwtPayload } from "./jwt_decode.ts";
 import { basename, readLocalFile } from "./local_file.ts";
-import { filterComments, runLongPoll } from "./read.ts";
+import {
+  filterComments,
+  formatLongPollCommand,
+  type LongPollCommandArgs,
+  runLongPoll,
+} from "./read.ts";
 import { type Paths, resolvePaths } from "./paths.ts";
 import { resolveRepo } from "./resolve_repo.ts";
 import { getToken } from "./token.ts";
@@ -90,12 +95,22 @@ async function getGitRemoteUrl(rt: Runtime): Promise<string | null> {
   return result.stdout.trim() || null;
 }
 
+/**
+ * Only extracts `--repo` before a `--` separator — everything after it
+ * (e.g. `exec`'s wrapped command) is passed through untouched, even if it
+ * has its own unrelated `--repo` flag (regression: `claw exec --repo A --
+ * gh pr list --repo B` used to silently strip gh's own `--repo B`).
+ */
 function extractRepoFlag(args: string[]): { repo?: string; rest: string[] } {
   const rest: string[] = [];
   let repo: string | undefined;
+  const sepIndex = args.indexOf("--");
+  const scanEnd = sepIndex === -1 ? args.length : sepIndex;
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]!;
-    if (arg === "--repo") {
+    if (i >= scanEnd) {
+      rest.push(arg);
+    } else if (arg === "--repo") {
       repo = args[++i];
     } else if (arg.startsWith("--repo=")) {
       repo = arg.slice("--repo=".length);
@@ -352,11 +367,38 @@ async function cmdLongPoll(args: string[], rt: Runtime): Promise<number> {
       sleep: rt.sleep,
       now: () => rt.now().getTime(),
     });
-    if (comments.length === 0 && parsed.timeoutSeconds !== undefined) {
-      rt.stderr(`claw long-poll: no new comments after ${parsed.timeoutSeconds}s\n`);
-    }
-    for (const comment of comments) {
-      rt.stdout(JSON.stringify(comment) + "\n");
+
+    const commandArgs: LongPollCommandArgs = {
+      issue: parsed.issue,
+      ...(parsed.repo !== undefined ? { repo: parsed.repo } : {}),
+      ...(parsed.authors !== undefined ? { authors: parsed.authors } : {}),
+      ...(parsed.before !== undefined ? { before: parsed.before } : {}),
+      ...(parsed.intervalSeconds !== undefined ? { intervalSeconds: parsed.intervalSeconds } : {}),
+      ...(parsed.timeoutSeconds !== undefined ? { timeoutSeconds: parsed.timeoutSeconds } : {}),
+    };
+
+    if (comments.length > 0) {
+      const lastId = comments.reduce((max, c) => Math.max(max, c.commentId), 0);
+      rt.stdout(
+        ">>> NEW COMMENTS. Before you act on them, start long-poll again in the background. " +
+          "The command is at the end.\n",
+      );
+      for (const comment of comments) {
+        rt.stdout(JSON.stringify(comment) + "\n");
+      }
+      rt.stdout(
+        `>>> Start this now, in the background, before anything else: ${
+          formatLongPollCommand(commandArgs, lastId)
+        }\n`,
+      );
+    } else if (parsed.timeoutSeconds !== undefined) {
+      // parsed.after is the only sensible "next --after" here: nothing new arrived, so
+      // the caller should keep waiting from exactly where this run started.
+      const command = formatLongPollCommand(commandArgs, parsed.after ?? 0);
+      rt.stdout(
+        `>>> No new comments after ${parsed.timeoutSeconds} seconds. ` +
+          `Start this now, in the background: ${command}\n`,
+      );
     }
     return 0;
   } catch {

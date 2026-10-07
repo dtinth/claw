@@ -424,6 +424,44 @@ Deno.test("exec: propagates the child's exit code", async () => {
   assertEquals(code, 17);
 });
 
+Deno.test("exec: a --repo belonging to the wrapped command (after --) is left alone, not eaten by exec's own --repo (regression)", async () => {
+  const configDir = await Deno.makeTempDir();
+  await Deno.writeTextFile(
+    `${configDir}/grants.json`,
+    JSON.stringify({ "dtinth/claw": "the.jwt" }),
+  );
+  const { rt, spawnCalls } = makeFakeRuntime({
+    env: {
+      HOME: "/home/dtinth",
+      CLAW_BASE_URL: "https://claw.example.com",
+      CLAW_REPO: "dtinth/claw",
+      CLAW_CONFIG_DIR: configDir,
+      CLAW_CACHE_DIR: await Deno.makeTempDir(),
+    },
+    fetchHandler: () =>
+      jsonResponse({
+        token: "ghs_execd",
+        expires_at: "2026-07-21T01:00:00Z",
+        repository: "dtinth/claw",
+        permissions: {},
+      }),
+    spawnCode: 0,
+  });
+
+  // exec's own --repo (dtinth/claw, picks the token) comes before --; gh's
+  // own --repo (a different repo it's asking about) comes after -- and must
+  // survive into the child command untouched.
+  const code = await runCli(
+    ["exec", "--repo", "dtinth/claw", "--", "gh", "pr", "list", "--repo", "dtinth/other"],
+    rt,
+  );
+
+  assertEquals(code, 0);
+  assertEquals(spawnCalls[0]!.cmd, "gh");
+  assertEquals(spawnCalls[0]!.args, ["pr", "list", "--repo", "dtinth/other"]);
+  assertEquals(spawnCalls[0]!.env.CLAW_REPO, "dtinth/claw");
+});
+
 Deno.test("exec: requires a -- separator", async () => {
   const { rt, stderr, spawnCalls } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
   const code = await runCli(["exec", "git", "push"], rt);
@@ -611,6 +649,42 @@ Deno.test("long-poll: rejects a non-positive --timeout", async () => {
   const code = await runCli(["long-poll", "24", "--timeout", "0"], rt);
   assertEquals(code, 1);
   assertStringIncludes(stderr.join(""), "--timeout");
+});
+
+Deno.test("long-poll: on a match, brackets the comment(s) with a restart reminder and the exact next command", async () => {
+  const configDir = await Deno.makeTempDir();
+  await Deno.writeTextFile(
+    `${configDir}/grants.json`,
+    JSON.stringify({ "dtinth/claw": "the.jwt" }),
+  );
+  const comment = {
+    commentId: 5,
+    repo: "dtinth/claw",
+    issue: 24,
+    author: "dtinth",
+    authorId: 1,
+    body: "hi",
+    url: "https://github.com/dtinth/claw/issues/24#issuecomment-5",
+  };
+  const { rt, stdout } = makeFakeRuntime({
+    env: {
+      HOME: "/home/dtinth",
+      CLAW_BASE_URL: "https://claw.example.com",
+      CLAW_REPO: "dtinth/claw",
+      CLAW_CONFIG_DIR: configDir,
+      CLAW_CACHE_DIR: await Deno.makeTempDir(),
+    },
+    fetchHandler: () => jsonResponse({ comments: [comment] }),
+  });
+  const code = await runCli(["long-poll", "24", "--authors", "dtinth", "--after", "1"], rt);
+  assertEquals(code, 0);
+  assertEquals(stdout, [
+    ">>> NEW COMMENTS. Before you act on them, start long-poll again in the background. " +
+    "The command is at the end.\n",
+    JSON.stringify(comment) + "\n",
+    ">>> Start this now, in the background, before anything else: " +
+    "claw long-poll 24 --authors dtinth --after 5\n",
+  ]);
 });
 
 // --- claw usage-report -------------------------------------------------------

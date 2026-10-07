@@ -89,26 +89,38 @@ Bash({
 ```
 
 You get an ordinary task-completion notification once it exits — i.e. once a new comment arrives.
-**Restart `long-poll` immediately, as the very first thing you do on that notification** — with
-`--after` bumped to the new highest commentId — before reading the comment for content or doing any
-of the work it asks for. If the comment turns out to need a long or involved response, it's easy to
-get absorbed in that and forget to restart the watch once you're done; starting it first removes
-that risk entirely; the poll runs in the background regardless of what you do next. Nothing here is
+`long-poll`'s stdout brackets the comment(s) with exactly what to do next, so the loop doesn't rely
+on remembering anything:
+
+```
+>>> NEW COMMENTS. Before you act on them, start long-poll again in the background. The command is at the end.
+{"commentId":...,"body":"...",...}
+>>> Start this now, in the background, before anything else: claw long-poll 5 --authors dtinth --after 6045079513
+```
+
+**Run that `>>> Start this now...` command immediately, as the very first thing you do on the
+notification** — before reading the comment for content or doing any of the work it asks for. If the
+comment turns out to need a long or involved response, it's easy to get absorbed in that and forget
+to restart the watch once you're done; running the given command first removes that risk entirely —
+the poll runs in the background regardless of what you do next. Nothing here is
 Monitor-tool-specific and there's no 30-minute cap: `long-poll` just blocks inside its own process
 for as long as it takes.
 
 Use this whenever a task involves waiting on a human reply on a specific issue/PR (e.g. after
 posting a question or opening a PR for review) instead of polling GitHub directly. Both commands are
-stateless — status/errors go to stderr only (never stdout) — and `commentId` (via `--after`/
-`--before`) is the only cursor; nothing is persisted to disk, so you (the agent) are responsible for
-remembering the last id you saw, including across a restart. No comment is ever lost between two
-`long-poll` runs: each run re-fetches the full backlog and filters by `--after`, so anything that
-arrived in the gap between one run ending and the next starting still shows up immediately.
+stateless — status/errors (as opposed to the `>>>` lines, which are stdout) go to stderr only — and
+`commentId` (via `--after`/`--before`) is the only cursor; nothing is persisted to disk, but you
+don't need to track it yourself either, since each `>>>` line already has the right `--after` baked
+in. No comment is ever lost between two `long-poll` runs: each run re-fetches the full backlog and
+filters by `--after`, so anything that arrived in the gap between one run ending and the next
+starting still shows up immediately.
 
 If a harness can't background a command indefinitely, add `--timeout <seconds>`: `long-poll` then
-gives up after that many seconds with no match, printing `no new comments after Ns` to stderr and
-exiting 0 — restart it with the same `--after` id. If backgrounding isn't available at all, fall
-back to calling `claw read --after <id>` periodically between other work instead.
+gives up after that many seconds with no match, printing
+`>>> No new comments after Ns seconds.
+Start this now, in the background: <command>` to stdout and
+exiting 0 — run that command. If backgrounding isn't available at all, fall back to calling
+`claw read --after <id>` periodically between other work instead.
 
 **Every reply on a watched issue must be an actual posted GitHub comment**
 (`claw exec -- gh issue comment ...`) — including short answers to exploratory questions. In-session

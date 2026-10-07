@@ -181,15 +181,19 @@ process, but an invalid/expired JWT (401) or a relay that isn't configured
 on the server (503) exits — those won't fix themselves by retrying.
 
 Both are stateless: nothing is written to disk, and `commentId` bounds
-(`--after`/`--before`) are the only cursor — the caller (your agent) is
-responsible for remembering the last id it saw. No comment is ever lost
-between two `long-poll` runs, since each run re-fetches the full backlog
-and filters client-side rather than resuming from a saved position.
+(`--after`/`--before`) are the only cursor. `long-poll` tracks that cursor
+*for* the caller, though: on a match, its stdout brackets the comment(s)
+with a reminder to restart the watch and the exact next `long-poll` command
+(same flags, `--after` advanced) to run first, before acting on what the
+comment says — print lines prefixed `>>>`, never mixed with jsonl comment
+lines. No comment is ever lost between two `long-poll` runs, since each run
+re-fetches the full backlog and filters client-side rather than resuming
+from a saved position.
 
-`--timeout <seconds>` bounds how long `long-poll` waits: past that, it exits
-0 having printed nothing, after logging `no new comments after Ns` to
-stderr — useful for a host that can't background a command indefinitely;
-restart with the same `--after` id.
+`--timeout <seconds>` bounds how long `long-poll` waits: past that, it
+exits 0 having printed only an `>>> No new comments after Ns seconds. ...`
+line (stdout, with the same next command to run) — useful for a host that
+can't background a command indefinitely.
 
 `claw monitor` is removed; running it prints a message pointing at `read`/
 `long-poll` and exits 1.

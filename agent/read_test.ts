@@ -1,5 +1,5 @@
 import { assertEquals, assertRejects } from "@std/assert";
-import { filterComments, runLongPoll } from "./read.ts";
+import { filterComments, formatLongPollCommand, runLongPoll } from "./read.ts";
 import type { RelayedComment } from "./comments_client.ts";
 
 function comment(commentId: number): RelayedComment {
@@ -34,6 +34,28 @@ Deno.test("filterComments: --before keeps only comments with a strictly smaller 
 Deno.test("filterComments: --after and --before together bound a range on both sides", () => {
   const comments = [comment(10), comment(20), comment(30), comment(40)];
   assertEquals(filterComments(comments, { after: 10, before: 40 }), [comment(20), comment(30)]);
+});
+
+// --- formatLongPollCommand (pure) --------------------------------------------
+
+Deno.test("formatLongPollCommand: bare issue and --after only, with no other flags given", () => {
+  assertEquals(formatLongPollCommand({ issue: 24 }, 30), "claw long-poll 24 --after 30");
+});
+
+Deno.test("formatLongPollCommand: repeats every flag that was given, in a fixed order", () => {
+  const command = formatLongPollCommand({
+    issue: 24,
+    repo: "dtinth/claw",
+    authors: ["dtinth", "alice"],
+    before: 999,
+    intervalSeconds: 5,
+    timeoutSeconds: 300,
+  }, 30);
+  assertEquals(
+    command,
+    "claw long-poll 24 --repo dtinth/claw --authors dtinth,alice --before 999 " +
+      "--interval 5 --timeout 300 --after 30",
+  );
 });
 
 // --- runLongPoll -------------------------------------------------------------

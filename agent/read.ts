@@ -37,6 +37,33 @@ export function filterComments(
   );
 }
 
+export interface LongPollCommandArgs {
+  issue: number;
+  repo?: string;
+  authors?: string[];
+  before?: number;
+  intervalSeconds?: number;
+  timeoutSeconds?: number;
+}
+
+/**
+ * Rebuilds the exact `claw long-poll` invocation to run next — same flags as
+ * this run, `--after` advanced to `afterId`. Printed back to the caller so
+ * restarting the watch is "run the line you were just given," not "remember
+ * to bump `--after` yourself" (see https://github.com/dtinth/gangprompting-skill/pull/8,
+ * whose `long-poll` does the same thing for the same reason).
+ */
+export function formatLongPollCommand(args: LongPollCommandArgs, afterId: number): string {
+  const parts = ["claw", "long-poll", String(args.issue)];
+  if (args.repo !== undefined) parts.push("--repo", args.repo);
+  if (args.authors !== undefined) parts.push("--authors", args.authors.join(","));
+  if (args.before !== undefined) parts.push("--before", String(args.before));
+  if (args.intervalSeconds !== undefined) parts.push("--interval", String(args.intervalSeconds));
+  if (args.timeoutSeconds !== undefined) parts.push("--timeout", String(args.timeoutSeconds));
+  parts.push("--after", String(afterId));
+  return parts.join(" ");
+}
+
 export interface RunLongPollParams extends FilterBounds {
   baseUrl: string;
   /** The claw JWT for this repo — sent directly, no installation token is minted. */
