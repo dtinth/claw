@@ -152,6 +152,31 @@ picks it up through the credential helper `setup` installed. Tokens are
 scoped to the single repo the JWT names, so wrap the command, not a whole
 shell session: `GH_TOKEN` is a snapshot and doesn't renew mid-session.
 
+### Requesting a grant, without minting one by hand
+
+If a repo has no grant yet, an agent can ask for one itself instead of you
+minting a JWT on the web UI:
+
+```sh
+claw request-grant owner/repo --reason "fixing the mobile layout bug"
+```
+
+This prints a short code — safe to post anywhere, including a public GitHub
+comment, since knowing it only lets you *look up and approve* the request on
+claw's dashboard, never claim the resulting grant — and the exact next
+command to run: `claw await-grant <secret>`. That secret is deliberately a
+different value from the code (PKCE-shaped): it's what actually claims the
+grant once approved, so it must never be shown to a human or posted
+anywhere, only handed straight to `await-grant`.
+
+`await-grant` blocks — same shape as `long-poll` (`--interval`, `--timeout`,
+the same `>>> Start this now...` convention on timeout) — until you approve
+the request on claw's dashboard (a code box next to the sidebar), then saves
+the resulting grant automatically, just like `claw grant` would. A grant
+minted this way always expires in 14 days, capped regardless of what the
+"coding-agent" preset would otherwise allow — the only preset this flow can
+self-serve; anything broader still needs a hand-minted JWT.
+
 ### Watching for comments
 
 `claw read <issue>` fetches claw's comment relay for one issue/PR once and

@@ -31,6 +31,7 @@ import { InvalidFilenameError, type UploadService } from "../storage/upload.ts";
 import { parseUsageReport, renderUsageHtml, usageSectionHtml } from "./usage.ts";
 import { parseIssueCommentEvent, verifyWebhookSignature } from "../webhook.ts";
 import { type ClawGrant, ClawJwtError, createClawJwt, verifyClawJwt } from "../jwt.ts";
+import { createGrantRequestStore, GrantRequestError } from "../grant_requests.ts";
 import { type DraftInput, type DraftTarget, parseDraftParams } from "../draft.ts";
 import {
   formatPermissions,
@@ -73,6 +74,9 @@ export function createApp(deps: AppDeps) {
   const sidebarForSession = grist ? usageSectionHtml() + sidebarHtml() : undefined;
   const secure = config.baseUrl.startsWith("https://");
   const redirectUri = `${config.baseUrl}/auth/callback`;
+  // The one deliberate exception to this app being otherwise fully
+  // stateless (see the header comment) — see grant_requests.ts for why.
+  const grantRequests = createGrantRequestStore();
 
   const app = new Hono<{ Variables: Variables }>();
 
@@ -106,6 +110,8 @@ export function createApp(deps: AppDeps) {
   };
   app.use("/mint", requireSession);
   app.use("/jwt", requireSession);
+  app.use("/api/grant-requests/lookup/:code", requireSession);
+  app.use("/api/grant-requests/lookup/:code/approve", requireSession);
   app.use("/draft", requireSession);
   app.use("/:owner/:repo/issues/:number", requireSession);
   app.use("/:owner/:repo/pull/:number", requireSession);
@@ -378,6 +384,82 @@ export function createApp(deps: AppDeps) {
         400,
       );
     }
+  });
+
+  // --- agent self-service: claw request-grant / claw await-grant ----------
+  //
+  // PKCE-shaped: `secret` is handed back once, straight to the agent that
+  // asked for it, and is the only thing /poll accepts — it's what claims the
+  // grant. `code` is short and meant to be read by a human and posted
+  // publicly (e.g. in a GitHub comment); it only looks up which pending
+  // request to show on /mint, and can't claim anything on its own.
+
+  const GRANT_REQUEST_TTL_SECONDS = 14 * 24 * 60 * 60;
+
+  app.post("/api/grant-requests", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: "invalid JSON body" }, 400);
+    }
+    const b = body as Record<string, unknown>;
+    const repo = typeof b.repo === "string" ? b.repo : "";
+    const reason = typeof b.reason === "string" && b.reason.trim() ? b.reason.trim() : undefined;
+    try {
+      const result = grantRequests.create(repo, reason);
+      return c.json(result);
+    } catch (error) {
+      const message = error instanceof GrantRequestError
+        ? error.message
+        : error instanceof Error
+        ? error.message
+        : String(error);
+      return c.json({ error: message }, 400);
+    }
+  });
+
+  app.get("/api/grant-requests/poll", (c) => {
+    const secret = bearer(c.req.header("authorization"));
+    if (!secret) return c.json({ error: "missing bearer token" }, 401);
+    const result = grantRequests.poll(secret);
+    if (result.status === "not_found") {
+      return c.json({ error: "no such grant request (expired, unknown, or already claimed)" }, 404);
+    }
+    if (result.status === "pending") return c.json({ status: "pending" });
+    return c.json({
+      status: "approved",
+      token: result.grant.token,
+      expiresAt: result.grant.expiresAt,
+    });
+  });
+
+  app.get("/api/grant-requests/lookup/:code", (c) => {
+    const code = c.req.param("code").toUpperCase();
+    return c.html(grantRequestLookupHtml(code, grantRequests.lookupByCode(code)));
+  });
+
+  app.post("/api/grant-requests/lookup/:code/approve", async (c) => {
+    const code = c.req.param("code").toUpperCase();
+    const summary = grantRequests.lookupByCode(code);
+    if (!summary) {
+      return c.html(
+        errorBlock("No such pending grant request (expired, or already approved)."),
+        404,
+      );
+    }
+    const token = await createClawJwt(
+      {
+        repo: summary.repo,
+        permissions: CODING_AGENT_PRESET_PERMISSIONS,
+        ttlSeconds: GRANT_REQUEST_TTL_SECONDS,
+        ...(summary.reason ? { label: summary.reason } : {}),
+      },
+      config.jwtSecret,
+    );
+    const grant = await verifyClawJwt(token, config.jwtSecret);
+    grantRequests.approve(code, { token, expiresAt: grant.expiresAt.toISOString() });
+    return c.html(grantRequestApprovedHtml(summary.repo));
   });
 
   // --- agent API: exchange claw JWT for an installation token -------------
@@ -786,6 +868,10 @@ const PERMISSION_PRESETS = [
   { id: "clear", label: "Clear", perms: {} },
 ] as const;
 
+/** The only preset `claw request-grant` can self-serve — see its route for why. */
+const CODING_AGENT_PRESET_PERMISSIONS: Permissions =
+  PERMISSION_PRESETS.find((p) => p.id === "agent")!.perms;
+
 function permissionPresetButtons(): string {
   return PERMISSION_PRESETS.map((p) =>
     `<button type="button" class="preset" data-claw-preset="${p.id}">${
@@ -812,12 +898,68 @@ function permissionPresetScript(): string {
 </script>`;
 }
 
+/**
+ * The approve-a-pending-request code box lives here, not on /mint: this is
+ * the page dtinth actually opens from his phone (the sidebar is the point of
+ * keeping it minimal), so that's where approving an agent's self-served
+ * grant request needs to be reachable.
+ */
+function grantApproveScript(): string {
+  return `<script>
+(function () {
+  var codeInput = document.getElementById("grant_code");
+  var info = document.getElementById("grant-request-info");
+  var btn = document.getElementById("grant-approve-btn");
+  if (!codeInput || !info || !btn) return;
+  var matchedCode = null;
+
+  function reset() {
+    info.innerHTML = "";
+    btn.disabled = true;
+    matchedCode = null;
+  }
+
+  btn.addEventListener("click", function () {
+    if (!matchedCode) return;
+    btn.disabled = true;
+    fetch("/api/grant-requests/lookup/" + encodeURIComponent(matchedCode) + "/approve", { method: "POST" })
+      .then(function (r) { return r.text().then(function (html) { return { ok: r.ok, html: html }; }); })
+      .then(function (result) {
+        info.innerHTML = result.html;
+        if (!result.ok) btn.disabled = false;
+      });
+  });
+
+  codeInput.addEventListener("input", function () {
+    var code = codeInput.value.trim().toUpperCase();
+    codeInput.value = code;
+    if (code.length !== 6) { reset(); return; }
+    fetch("/api/grant-requests/lookup/" + encodeURIComponent(code))
+      .then(function (r) { return r.text(); })
+      .then(function (html) {
+        info.innerHTML = html;
+        var matched = html.indexOf("No matching") === -1;
+        matchedCode = matched ? code : null;
+        btn.disabled = !matched;
+      });
+  });
+})();
+</script>`;
+}
+
 function dashboard(session: Session): string {
   return `
   <p>Signed in as <strong>@${escapeHtml(session.login)}</strong>.
     <form class="inline" method="post" action="/auth/logout"><button type="submit" class="link-button">Log out</button></form>
   </p>
-  <p><a href="/mint" class="btn-link">Mint a new JWT →</a></p>`;
+  <p><a href="/mint" class="btn-link">Mint a new JWT →</a></p>
+  <div class="row">
+    <input id="grant_code" type="text" maxlength="6" placeholder="6-char code"
+      autocomplete="off" style="text-transform:uppercase">
+    <button type="button" id="grant-approve-btn" disabled>Approve</button>
+  </div>
+  <div id="grant-request-info"></div>
+  ${grantApproveScript()}`;
 }
 
 function mintPage(allowedLogin: string, baseUrl: string): string {
@@ -863,6 +1005,27 @@ function mintPage(allowedLogin: string, baseUrl: string): string {
     Open it to review, edit, and post the comment as yourself.</p>
   ${permissionPresetScript()}
   ${backLink("/")}`;
+}
+
+function grantRequestLookupHtml(
+  code: string,
+  summary: { repo: string; reason?: string } | undefined,
+): string {
+  if (!summary) {
+    return `<p class="muted">No matching pending request for <code>${escapeHtml(code)}</code>.</p>`;
+  }
+  return `<div class="card">
+    <p>Pending request from an agent for <code>${
+    escapeHtml(summary.repo)
+  }</code> — coding-agent access, 14 days.</p>
+    ${summary.reason ? `<p class="muted">${escapeHtml(summary.reason)}</p>` : ""}
+  </div>`;
+}
+
+function grantRequestApprovedHtml(repo: string): string {
+  return `<div class="card"><p class="ok"><strong>Approved</strong> for <code>${
+    escapeHtml(repo)
+  }</code> — the agent will pick it up within a few seconds.</p></div>`;
 }
 
 function mintedTokenPage(

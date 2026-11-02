@@ -246,9 +246,33 @@ process artifacts the work produces: git commit messages, PR descriptions, and c
 
 Both of the above only work for repos where a claw JWT has already been installed. If a command
 fails, run `claw doctor` for a full status check (config paths, server URL, grants, git credential
-helper, `gh` on PATH). If a repo has no grant yet, mint a claw JWT from the web UI (scoped to that
-repo, with the permissions the task needs — e.g. the "Coding agent" preset) and run `claw grant`
-(paste it, or pipe via stdin) to install it.
+helper, `gh` on PATH).
+
+If a repo has no grant yet and only "coding agent" permissions are needed, self-serve one instead of
+asking dtinth to mint a JWT by hand:
+
+```sh
+claw request-grant owner/repo --reason "why this repo needs access"
+```
+
+This prints a short code and the exact next command — `claw await-grant <secret>` — to run **as the
+very first thing, before anything else**. Post the code where dtinth will see it (it's explicitly
+safe to post publicly — that's the whole point of the code/secret split, see below); never post or
+show the secret. Run `claw await-grant <secret>` as a **backgrounded Bash call**
+(`run_in_background: true`), same as `long-poll` — it blocks until dtinth approves on claw's
+dashboard, then installs the grant automatically; no further `claw grant` step needed. It mirrors
+`long-poll`'s shape otherwise too: `--timeout <seconds>` and the same `>>> Start this now...`
+convention if it gives up.
+
+The code and the secret are deliberately different values (PKCE-shaped): the code only lets dtinth
+look up and approve the request, never claim its grant, so it's safe to post anywhere this public
+code is; the secret is what actually claims the grant, so it must never be shown to a human or
+posted anywhere.
+
+This only self-serves the "coding agent" preset, capped at a 14-day grant — if a task genuinely
+needs something broader, ask dtinth to mint a claw JWT from the web UI instead (scoped to that repo,
+with the permissions the task needs) and run `claw grant` (paste it, or pipe via stdin) to install
+it.
 
 `claw set server <url>` persists the claw server URL so `CLAW_BASE_URL` doesn't need re-exporting
 every session; `CLAW_BASE_URL` still overrides it when set.

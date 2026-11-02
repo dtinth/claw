@@ -6,10 +6,12 @@
  * sends) are the exception: they go through the real Deno fs directly,
  * exercised in tests via temp dirs.
  */
+import { runAwaitGrant } from "./await_grant.ts";
 import { clearCache } from "./cache.ts";
 import { defaultClaudeCredentialsPath } from "./claude_credentials.ts";
 import { createCommentsClient } from "./comments_client.ts";
 import { loadConfigOrEmpty, setBaseUrl } from "./config_store.ts";
+import { createGrantRequestClient } from "./grant_request_client.ts";
 import { findGrant, loadGrants, upsertGrant } from "./grants.ts";
 import { decodeClawJwtPayload } from "./jwt_decode.ts";
 import { basename, readLocalFile } from "./local_file.ts";
@@ -32,6 +34,8 @@ const LONG_POLL_USAGE =
 const UPLOAD_USAGE =
   "usage: claw upload <path> [--repo owner/repo] [--keep-filename | --filename name]";
 const USAGE_REPORT_USAGE = "usage: claw usage-report [--interval 60]";
+const REQUEST_GRANT_USAGE = 'usage: claw request-grant <owner/repo> [--reason "..."]';
+const AWAIT_GRANT_USAGE = "usage: claw await-grant <secret> [--interval 10] [--timeout seconds]";
 
 const HELP_TEXT = `claw — mint repo-scoped GitHub tokens from a claw JWT
 
@@ -48,6 +52,10 @@ Usage:
   claw upload <path> [--repo owner/repo] [--keep-filename | --filename name]
                                          Upload a file, print its public URL
   claw usage-report [--interval 60]     Poll Claude Code's usage and report it to claw
+  claw request-grant <owner/repo> [--reason "..."]
+                                         Ask for a grant on a repo with none yet; prints a code
+  claw await-grant <secret> [--interval 10] [--timeout secs]
+                                         Block until that request is approved, then save the grant
   claw setup                            Point git's github.com credential helper at gh
   claw doctor                           Check config, grants, and git wiring
 
@@ -482,6 +490,177 @@ async function cmdUsageReport(args: string[], rt: Runtime): Promise<number> {
   return 0;
 }
 
+interface RequestGrantArgs {
+  repo?: string;
+  reason?: string;
+  error?: string;
+}
+
+function parseRequestGrantArgs(args: string[]): RequestGrantArgs {
+  let reason: string | undefined;
+  const positional: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--reason") {
+      reason = args[++i];
+    } else if (arg.startsWith("--reason=")) {
+      reason = arg.slice("--reason=".length);
+    } else {
+      positional.push(arg);
+    }
+  }
+  const repo = positional[0];
+  if (!repo) return { error: REQUEST_GRANT_USAGE };
+  return { repo, ...(reason !== undefined && reason.trim() ? { reason: reason.trim() } : {}) };
+}
+
+/**
+ * `claw request-grant`/`claw await-grant` self-serve a grant for a repo with
+ * none yet — see `src/grant_requests.ts` for the PKCE-shaped split: this
+ * command prints a short `code` meant to be posted publicly (e.g. in a
+ * GitHub comment) and a `secret` that must never be shown or posted, only
+ * handed straight to `claw await-grant` as its next command.
+ */
+async function cmdRequestGrant(args: string[], rt: Runtime): Promise<number> {
+  const parsed = parseRequestGrantArgs(args);
+  if (parsed.error || !parsed.repo) {
+    rt.stderr((parsed.error ?? REQUEST_GRANT_USAGE) + "\n");
+    return 1;
+  }
+  const paths = resolvePaths(rt.env);
+  const baseUrl = await resolveBaseUrlValue(rt, paths);
+  if (!baseUrl) {
+    rt.stderr(
+      "claw: no claw server configured — export CLAW_BASE_URL, or run `claw set server <url>`\n",
+    );
+    return 1;
+  }
+
+  const client = createGrantRequestClient({ baseUrl, fetch: rt.fetch });
+  try {
+    const result = await client.create(parsed.repo, parsed.reason);
+    rt.stdout(
+      `claw request-grant: requested coding-agent access to ${parsed.repo} ` +
+        `(code expires in ${result.expiresInSeconds}s)\n`,
+    );
+    rt.stdout(
+      `>>> Tell the human this code now — it is safe to post publicly: ${result.code}\n`,
+    );
+    rt.stdout(
+      `>>> Then, before anything else, start this in the background: claw await-grant ${result.secret}\n`,
+    );
+    return 0;
+  } catch (error) {
+    rt.stderr(`claw request-grant: ${error instanceof Error ? error.message : String(error)}\n`);
+    return 1;
+  }
+}
+
+interface AwaitGrantArgs {
+  secret?: string;
+  intervalSeconds?: number;
+  timeoutSeconds?: number;
+  error?: string;
+}
+
+function parseAwaitGrantArgs(args: string[]): AwaitGrantArgs {
+  let intervalSeconds: number | undefined;
+  let timeoutSeconds: number | undefined;
+  const positional: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]!;
+    if (arg === "--interval") {
+      intervalSeconds = Number(args[++i]);
+    } else if (arg.startsWith("--interval=")) {
+      intervalSeconds = Number(arg.slice("--interval=".length));
+    } else if (arg === "--timeout") {
+      timeoutSeconds = Number(args[++i]);
+    } else if (arg.startsWith("--timeout=")) {
+      timeoutSeconds = Number(arg.slice("--timeout=".length));
+    } else {
+      positional.push(arg);
+    }
+  }
+  const secret = positional[0];
+  if (!secret) return { error: AWAIT_GRANT_USAGE };
+  if (
+    intervalSeconds !== undefined && (!Number.isFinite(intervalSeconds) || intervalSeconds <= 0)
+  ) {
+    return { error: "claw: --interval must be a positive number of seconds" };
+  }
+  if (timeoutSeconds !== undefined && (!Number.isFinite(timeoutSeconds) || timeoutSeconds <= 0)) {
+    return { error: "claw: --timeout must be a positive number of seconds" };
+  }
+  return {
+    secret,
+    ...(intervalSeconds !== undefined ? { intervalSeconds } : {}),
+    ...(timeoutSeconds !== undefined ? { timeoutSeconds } : {}),
+  };
+}
+
+function formatAwaitGrantCommand(
+  secret: string,
+  args: Pick<AwaitGrantArgs, "intervalSeconds" | "timeoutSeconds">,
+): string {
+  const parts = ["claw", "await-grant", secret];
+  if (args.intervalSeconds !== undefined) parts.push("--interval", String(args.intervalSeconds));
+  if (args.timeoutSeconds !== undefined) parts.push("--timeout", String(args.timeoutSeconds));
+  return parts.join(" ");
+}
+
+async function cmdAwaitGrant(args: string[], rt: Runtime): Promise<number> {
+  const parsed = parseAwaitGrantArgs(args);
+  if (parsed.error || !parsed.secret) {
+    rt.stderr((parsed.error ?? AWAIT_GRANT_USAGE) + "\n");
+    return 1;
+  }
+  const paths = resolvePaths(rt.env);
+  const baseUrl = await resolveBaseUrlValue(rt, paths);
+  if (!baseUrl) {
+    rt.stderr(
+      "claw: no claw server configured — export CLAW_BASE_URL, or run `claw set server <url>`\n",
+    );
+    return 1;
+  }
+  const intervalMs = (parsed.intervalSeconds ?? 10) * 1000;
+
+  try {
+    const result = await runAwaitGrant({
+      baseUrl,
+      secret: parsed.secret,
+      intervalMs,
+      ...(parsed.timeoutSeconds !== undefined ? { timeoutMs: parsed.timeoutSeconds * 1000 } : {}),
+      fetch: rt.fetch,
+      stderr: rt.stderr,
+      sleep: rt.sleep,
+      now: () => rt.now().getTime(),
+    });
+
+    if (result.status === "timed_out") {
+      const command = formatAwaitGrantCommand(parsed.secret, parsed);
+      rt.stdout(
+        `>>> Not approved after ${parsed.timeoutSeconds} seconds. ` +
+          `Start this now, in the background: ${command}\n`,
+      );
+      return 0;
+    }
+
+    const decoded = decodeClawJwtPayload(result.token);
+    const path = `${paths.configDir}/grants.json`;
+    const { replaced } = await upsertGrant(path, decoded.repo, result.token);
+    await clearCache(paths.cacheDir, decoded.repo);
+    rt.stdout(
+      `claw: ${replaced ? "updated" : "added"} the grant for ${decoded.repo}\n` +
+        `  permissions: ${formatPermissions(decoded.permissions)}\n` +
+        `  expires:     ${result.expiresAt}\n` +
+        `  saved to:    ${path}\n`,
+    );
+    return 0;
+  } catch {
+    return 1;
+  }
+}
+
 interface UploadArgs {
   path?: string;
   repo?: string;
@@ -743,6 +922,10 @@ export async function runCli(argv: string[], rt: Runtime): Promise<number> {
         return await cmdUpload(rest, rt);
       case "usage-report":
         return await cmdUsageReport(rest, rt);
+      case "request-grant":
+        return await cmdRequestGrant(rest, rt);
+      case "await-grant":
+        return await cmdAwaitGrant(rest, rt);
       case "token":
         return await cmdToken(rest, rt);
       case "exec":

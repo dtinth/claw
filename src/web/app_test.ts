@@ -148,6 +148,16 @@ Deno.test("GET /mint shows the mint-a-JWT form when logged in", async () => {
   assertStringIncludes(html, "Mint an intermediary JWT");
 });
 
+Deno.test("GET / (the dashboard, not /mint) includes the approve-a-pending-request code box", async () => {
+  const res = await makeApp(fakeGitHub()).request("/", {
+    headers: { cookie: await sessionCookie() },
+  });
+  const html = await res.text();
+  assertStringIncludes(html, 'id="grant_code"');
+  assertStringIncludes(html, 'id="grant-approve-btn"');
+  assertStringIncludes(html, "/api/grant-requests/lookup/");
+});
+
 Deno.test("/mint offers one-click permission presets", async () => {
   const res = await makeApp(fakeGitHub()).request("/mint", {
     headers: { cookie: await sessionCookie() },
@@ -472,6 +482,145 @@ Deno.test("POST /jwt redirects to login when logged out", async () => {
   });
   assertEquals(res.status, 302);
   assertEquals(res.headers.get("location"), "/auth/login");
+});
+
+// --- agent self-service: claw request-grant / claw await-grant -------------
+
+async function requestGrant(
+  app: ReturnType<typeof makeApp>,
+  body: Record<string, string>,
+): Promise<{ status: number; body: Record<string, unknown> }> {
+  const res = await app.request("/api/grant-requests", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  return { status: res.status, body: await res.json() };
+}
+
+Deno.test("POST /api/grant-requests returns a code and a secret, no session required", async () => {
+  const app = makeApp(fakeGitHub());
+  const { status, body } = await requestGrant(app, { repo: "dtinth/claw" });
+  assertEquals(status, 200);
+  assertEquals(typeof body.code, "string");
+  assertEquals((body.code as string).length, 6);
+  assertEquals(typeof body.secret, "string");
+  assertEquals(typeof body.expiresInSeconds, "number");
+});
+
+Deno.test("POST /api/grant-requests rejects a malformed repo with 400", async () => {
+  const app = makeApp(fakeGitHub());
+  const { status, body } = await requestGrant(app, { repo: "not-a-repo" });
+  assertEquals(status, 400);
+  assertEquals(typeof body.error, "string");
+});
+
+Deno.test("GET /api/grant-requests/poll reports pending before approval, no session required", async () => {
+  const app = makeApp(fakeGitHub());
+  const { body: created } = await requestGrant(app, { repo: "dtinth/claw" });
+  const res = await app.request("/api/grant-requests/poll", {
+    headers: { authorization: `Bearer ${created.secret}` },
+  });
+  assertEquals(res.status, 200);
+  assertEquals(await res.json(), { status: "pending" });
+});
+
+Deno.test("GET /api/grant-requests/poll rejects a missing bearer with 401", async () => {
+  const res = await makeApp(fakeGitHub()).request("/api/grant-requests/poll");
+  assertEquals(res.status, 401);
+});
+
+Deno.test("GET /api/grant-requests/poll returns 404 for an unknown secret", async () => {
+  const res = await makeApp(fakeGitHub()).request("/api/grant-requests/poll", {
+    headers: { authorization: "Bearer nope" },
+  });
+  assertEquals(res.status, 404);
+});
+
+Deno.test("GET /api/grant-requests/lookup/:code redirects to login when logged out", async () => {
+  const app = makeApp(fakeGitHub());
+  const { body: created } = await requestGrant(app, { repo: "dtinth/claw" });
+  const res = await app.request(`/api/grant-requests/lookup/${created.code}`, {
+    redirect: "manual",
+  });
+  assertEquals(res.status, 302);
+  assertEquals(res.headers.get("location"), "/auth/login");
+});
+
+Deno.test("GET /api/grant-requests/lookup/:code shows the repo and reason when logged in", async () => {
+  const app = makeApp(fakeGitHub());
+  const { body: created } = await requestGrant(app, {
+    repo: "dtinth/claw",
+    reason: "fixing the mobile layout bug",
+  });
+  const res = await app.request(`/api/grant-requests/lookup/${created.code}`, {
+    headers: { cookie: await sessionCookie() },
+  });
+  assertEquals(res.status, 200);
+  const html = await res.text();
+  assertStringIncludes(html, "dtinth/claw");
+  assertStringIncludes(html, "fixing the mobile layout bug");
+});
+
+Deno.test("GET /api/grant-requests/lookup/:code shows an empty state for an unknown code", async () => {
+  const res = await makeApp(fakeGitHub()).request("/api/grant-requests/lookup/ZZZZZZ", {
+    headers: { cookie: await sessionCookie() },
+  });
+  assertEquals(res.status, 200);
+  assertStringIncludes(await res.text(), "No matching");
+});
+
+Deno.test("POST /api/grant-requests/lookup/:code/approve redirects to login when logged out", async () => {
+  const app = makeApp(fakeGitHub());
+  const { body: created } = await requestGrant(app, { repo: "dtinth/claw" });
+  const res = await app.request(`/api/grant-requests/lookup/${created.code}/approve`, {
+    method: "POST",
+    redirect: "manual",
+  });
+  assertEquals(res.status, 302);
+  assertEquals(res.headers.get("location"), "/auth/login");
+});
+
+Deno.test("POST /api/grant-requests/lookup/:code/approve mints a 14-day coding-agent grant and lets the poll claim it", async () => {
+  const app = makeApp(fakeGitHub());
+  const { body: created } = await requestGrant(app, { repo: "dtinth/claw" });
+
+  const approveRes = await app.request(`/api/grant-requests/lookup/${created.code}/approve`, {
+    method: "POST",
+    headers: { cookie: await sessionCookie() },
+  });
+  assertEquals(approveRes.status, 200);
+  assertStringIncludes(await approveRes.text(), "pprove");
+
+  const pollRes = await app.request("/api/grant-requests/poll", {
+    headers: { authorization: `Bearer ${created.secret}` },
+  });
+  assertEquals(pollRes.status, 200);
+  const polled = await pollRes.json();
+  assertEquals(polled.status, "approved");
+  assertEquals(typeof polled.token, "string");
+
+  const grant = await verifyClawJwt(polled.token, config.jwtSecret);
+  assertEquals(grant.repo, "dtinth/claw");
+  assertEquals(grant.permissions, {
+    contents: "write",
+    issues: "write",
+    pull_requests: "write",
+    workflows: "write",
+    checks: "read",
+    statuses: "read",
+    actions: "write",
+  });
+  const ttlDays = (grant.expiresAt.getTime() - grant.issuedAt.getTime()) / 86_400_000;
+  assertEquals(Math.round(ttlDays), 14);
+});
+
+Deno.test("POST /api/grant-requests/lookup/:code/approve returns 404 for an unknown code", async () => {
+  const res = await makeApp(fakeGitHub()).request("/api/grant-requests/lookup/ZZZZZZ/approve", {
+    method: "POST",
+    headers: { cookie: await sessionCookie() },
+  });
+  assertEquals(res.status, 404);
 });
 
 // --- prefilled comment drafts ----------------------------------------------

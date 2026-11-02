@@ -723,6 +723,124 @@ Deno.test("usage-report: fails cleanly when HOME is unset and there's no CLAUDE_
   assertStringIncludes(stderr.join(""), "HOME");
 });
 
+// --- claw request-grant / claw await-grant ----------------------------------
+
+Deno.test("request-grant: rejects a missing repo argument", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["request-grant"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "usage");
+});
+
+Deno.test("request-grant: fails cleanly when no claw server is configured", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["request-grant", "dtinth/claw"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "CLAW_BASE_URL");
+});
+
+Deno.test("request-grant: on success, prints the code (marked safe to post) and the exact await-grant command with the secret", async () => {
+  const { rt, stdout } = makeFakeRuntime({
+    env: { HOME: "/home/dtinth", CLAW_BASE_URL: "https://claw.example.com" },
+    fetchHandler: () =>
+      jsonResponse({ secret: "the-secret-value", code: "AB3K9Z", expiresInSeconds: 900 }),
+  });
+
+  const code = await runCli(["request-grant", "dtinth/claw"], rt);
+
+  assertEquals(code, 0);
+  const output = stdout.join("");
+  assertStringIncludes(output, "dtinth/claw");
+  assertStringIncludes(output, "safe to post publicly: AB3K9Z");
+  assertStringIncludes(
+    output,
+    ">>> Then, before anything else, start this in the background: claw await-grant the-secret-value\n",
+  );
+});
+
+Deno.test("request-grant: forwards --reason to the request", async () => {
+  let sentBody: unknown;
+  const { rt } = makeFakeRuntime({
+    env: { HOME: "/home/dtinth", CLAW_BASE_URL: "https://claw.example.com" },
+  });
+  rt.fetch = ((_input: string, init?: RequestInit) => {
+    sentBody = JSON.parse(init!.body as string);
+    return Promise.resolve(jsonResponse({ secret: "s", code: "AB3K9Z", expiresInSeconds: 900 }));
+    // deno-lint-ignore no-explicit-any
+  }) as any;
+
+  const code = await runCli(["request-grant", "dtinth/claw", "--reason", "fixing a bug"], rt);
+
+  assertEquals(code, 0);
+  assertEquals(sentBody, { repo: "dtinth/claw", reason: "fixing a bug" });
+});
+
+Deno.test("request-grant: surfaces a server-side rejection (e.g. malformed repo) cleanly", async () => {
+  const { rt, stderr } = makeFakeRuntime({
+    env: { HOME: "/home/dtinth", CLAW_BASE_URL: "https://claw.example.com" },
+    fetchHandler: () =>
+      new Response(JSON.stringify({ error: "not a valid repo" }), {
+        status: 400,
+        headers: { "content-type": "application/json" },
+      }),
+  });
+
+  const code = await runCli(["request-grant", "not-a-repo"], rt);
+
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "not a valid repo");
+});
+
+Deno.test("await-grant: rejects a missing secret argument", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["await-grant"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "usage");
+});
+
+Deno.test("await-grant: rejects a non-positive --timeout", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["await-grant", "the-secret", "--timeout", "0"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "--timeout");
+});
+
+Deno.test("await-grant: fails cleanly when no claw server is configured", async () => {
+  const { rt, stderr } = makeFakeRuntime({ env: { HOME: "/home/dtinth" } });
+  const code = await runCli(["await-grant", "the-secret"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "CLAW_BASE_URL");
+});
+
+Deno.test("await-grant: once approved, decodes and saves the grant exactly like `claw grant` would", async () => {
+  const configDir = await Deno.makeTempDir();
+  const token = fakeClawJwt({ sub: "dtinth/claw", perms: { contents: "write" } });
+  const { rt, stdout } = makeFakeRuntime({
+    env: {
+      HOME: "/home/dtinth",
+      CLAW_BASE_URL: "https://claw.example.com",
+      CLAW_CONFIG_DIR: configDir,
+    },
+    fetchHandler: () =>
+      jsonResponse({ status: "approved", token, expiresAt: "2026-08-15T00:00:00Z" }),
+  });
+
+  const code = await runCli(["await-grant", "the-secret"], rt);
+
+  assertEquals(code, 0);
+  const saved = JSON.parse(await Deno.readTextFile(`${configDir}/grants.json`));
+  assertEquals(saved, { "dtinth/claw": token });
+  assertStringIncludes(stdout.join(""), "added the grant for dtinth/claw");
+});
+
+// Note: `await-grant`'s --timeout *behavior* (actually timing out, printing
+// the next-command line) is NOT exercised here — makeFakeRuntime's `now()` is
+// a fixed Date and `sleep()` is a no-op, so a deadline computed from `now()`
+// would never be reached and the loop would spin forever. That timing
+// behavior is covered instead by await_grant_test.ts's `runAwaitGrant` tests,
+// which use an explicit fake clock that actually advances (see
+// read.ts/cli.ts's same long-poll --timeout test, which hit the same trap).
+
 // --- resolveUploadFilename ---------------------------------------------------
 
 Deno.test("resolveUploadFilename: --filename wins outright", () => {
