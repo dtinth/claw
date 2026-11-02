@@ -88,12 +88,12 @@ Bash({
 })
 ```
 
-**Use the harness's own backgrounding, never `nohup ... & disown` or any other manual
-detaching.** A `nohup`'d process is invisible to the harness: nothing tells you when it exits, so a
-watcher that has already finished (and is no longer actually watching anything) looks identical to
-one still running, until a comment silently goes unnoticed. `run_in_background: true` is what turns
-the process's exit into a task notification you actually receive — a shell trick that looks
-equivalent throws that signal away.
+**Use the harness's own backgrounding, never `nohup ... & disown` or any other manual detaching.** A
+`nohup`'d process is invisible to the harness: nothing tells you when it exits, so a watcher that
+has already finished (and is no longer actually watching anything) looks identical to one still
+running, until a comment silently goes unnoticed. `run_in_background: true` is what turns the
+process's exit into a task notification you actually receive — a shell trick that looks equivalent
+throws that signal away.
 
 You get an ordinary task-completion notification once it exits — i.e. once a new comment arrives.
 `long-poll`'s stdout brackets the comment(s) with exactly what to do next, so the loop doesn't rely
@@ -225,17 +225,16 @@ whenever I'd want to know the task finished.
 
 ## Traceability
 
-When you do something because of a comment I posted on a watched issue/PR, link back to it from
-the process artifacts the work produces: git commit messages, PR descriptions, and comments
-elsewhere.
+When you do something because of a comment I posted on a watched issue/PR, link back to it from the
+process artifacts the work produces: git commit messages, PR descriptions, and comments elsewhere.
 
 - Link the comment(s) that asked for the work, plus any that steered it — not just the issue as a
   whole.
 - Use the full comment URL, with the `#issuecomment-<id>` anchor (e.g.
   `https://github.com/dtinth/claw/issues/5#issuecomment-6576785678`), not a bare issue link —
   without the anchor it doesn't point at the specific comment.
-- In a git commit message, add one trailer, next to the `Co-authored-by` line CLAUDE.md already
-  asks for:
+- In a git commit message, add one trailer, next to the `Co-authored-by` line CLAUDE.md already asks
+  for:
 
   ```
   Requested-in: <comment URL>
