@@ -191,6 +191,25 @@ Suggested quick replies:
 - The block is invisible once rendered (an HTML comment), both on GitHub and in claw's own feed — no
   need to mention it exists in the visible text.
 
+## Editing a specific comment
+
+Never use `gh issue comment --edit-last` to fix a comment you just posted — it edits the
+account's chronologically last comment on the **whole issue**, not the one just posted, and on a
+long-lived thread that can be a much older, unrelated comment. (GitHub does keep edit history,
+viewable from the web UI's "edited" link on a comment, so an accidental edit like this may be
+recoverable by asking dtinth to check there — but don't rely on that; avoid the mistake instead.)
+
+To edit one specific comment, use its exact id (from the URL or the `gh issue comment` output) with
+`gh api`, not `--edit-last`:
+
+```sh
+claw exec -- gh api repos/<owner>/<repo>/issues/comments/<id> -X PATCH -F body=@<file>
+```
+
+**Use `-F`, not `-f`.** `-F`/`--field` reads `@<file>` as "read the body from this file"; `-f`/
+`--raw-field` treats `@<file>` as a literal string and posts that path as the comment body
+verbatim — a real mistake made in this repo's own dev thread.
+
 ## Public repos: care with anything posted
 
 Most projects on this box are public open-source repos — comments, PR descriptions, and commit
