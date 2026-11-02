@@ -219,6 +219,22 @@ Deno.test("upsertUsage PUTs to the usage table, keyed by the fixed Row_Kind", as
   });
 });
 
+Deno.test("upsertUsage omits the five-hour fields when the snapshot has no 5-hour window (regression: Anthropic reports five_hour:null for some accounts)", async () => {
+  const { fn, calls } = fakeFetch(() => json({ records: [{ id: 1 }] }));
+  const client = createGristClient({ ...DEPS, fetch: fn });
+
+  const { fiveHourPct: _p, fiveHourResetsAt: _r, ...rest } = SAMPLE_SNAPSHOT;
+  await client.upsertUsage(rest);
+
+  const body = calls[0]!.body as { records: Array<{ fields: unknown }> };
+  assertEquals(body.records[0]!.fields, {
+    Row_Kind: "current",
+    Updated: 1719900000,
+    WeeklyPct: 31,
+    WeeklyResetsAt: "2026-07-28T00:00:00Z",
+  });
+});
+
 Deno.test("upsertUsage includes extra-usage fields only when given", async () => {
   const { fn, calls } = fakeFetch(() => json({ records: [{ id: 1 }] }));
   const client = createGristClient({ ...DEPS, fetch: fn });
@@ -292,6 +308,27 @@ Deno.test("getUsage converts Grist's epoch-seconds DateTime columns to ISO strin
 
   assertEquals(usage?.fiveHourResetsAt, new Date(1784905199.65325 * 1000).toISOString());
   assertEquals(usage?.weeklyResetsAt, new Date(1785020399.653271 * 1000).toISOString());
+});
+
+Deno.test("getUsage omits the five-hour fields when the row has no FiveHourPct/FiveHourResetsAt (regression: Anthropic reports five_hour:null for some accounts)", async () => {
+  const { fn } = fakeFetch(() =>
+    json({
+      records: [{
+        id: 1,
+        fields: {
+          Row_Kind: "current",
+          Updated: 1719900000,
+          WeeklyPct: 31,
+          WeeklyResetsAt: WEEKLY_RESETS_EPOCH,
+        },
+      }],
+    })
+  );
+  const client = createGristClient({ ...DEPS, fetch: fn });
+  const usage = await client.getUsage();
+  assertEquals("fiveHourPct" in (usage ?? {}), false);
+  assertEquals("fiveHourResetsAt" in (usage ?? {}), false);
+  assertEquals(usage?.weeklyPct, 31);
 });
 
 Deno.test("getUsage returns null when there is no row yet", async () => {

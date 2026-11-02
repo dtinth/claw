@@ -59,8 +59,9 @@ export async function runUsageReportLoop(params: RunUsageReportLoopParams): Prom
       const accessToken = await readClaudeAccessToken(params.credentialsPath);
       const usage = await usageClient.fetchUsage(accessToken);
       await reportClient.submit(jwt, usage);
+      const fiveHour = usage.fiveHourPct !== undefined ? `5h ${usage.fiveHourPct}%, ` : "";
       params.stderr(
-        `claw usage-report: ok — 5h ${usage.fiveHourPct}%, 7d ${usage.weeklyPct}%\n`,
+        `claw usage-report: ok — ${fiveHour}7d ${usage.weeklyPct}%\n`,
       );
     } catch (error) {
       params.stderr(`claw usage-report: poll failed, retrying: ${describeError(error)}\n`);

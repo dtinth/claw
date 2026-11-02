@@ -55,9 +55,10 @@ export interface GristClientDeps {
 export interface UsageSnapshot {
   /** When this snapshot was recorded, as epoch seconds. */
   updated: number;
-  fiveHourPct: number;
+  /** Absent when Anthropic reports no 5-hour window for this account. */
+  fiveHourPct?: number;
   /** ISO 8601 — when the 5-hour window resets. */
-  fiveHourResetsAt: string;
+  fiveHourResetsAt?: string;
   weeklyPct: number;
   /** ISO 8601 — when the 7-day window resets. */
   weeklyResetsAt: string;
@@ -113,9 +114,10 @@ interface UsageGristRow {
   fields: {
     Row_Kind: string;
     Updated: number;
-    FiveHourPct: number;
-    /** A native Grist DateTime column: read back as epoch seconds (possibly fractional), not the ISO string it was written with. */
-    FiveHourResetsAt: number;
+    /** `null`/absent when the snapshot had no 5-hour window to report. */
+    FiveHourPct?: number | null;
+    /** A native Grist DateTime column: read back as epoch seconds (possibly fractional), not the ISO string it was written with. `null`/absent along with `FiveHourPct`. */
+    FiveHourResetsAt?: number | null;
     WeeklyPct: number;
     WeeklyResetsAt: number;
     ExtraUsageEnabled?: boolean;
@@ -126,10 +128,12 @@ interface UsageGristRow {
 function mapUsageRow({ fields: f }: UsageGristRow): UsageSnapshot {
   return {
     updated: f.Updated,
-    fiveHourPct: f.FiveHourPct,
-    fiveHourResetsAt: new Date(f.FiveHourResetsAt * 1000).toISOString(),
     weeklyPct: f.WeeklyPct,
     weeklyResetsAt: new Date(f.WeeklyResetsAt * 1000).toISOString(),
+    ...(typeof f.FiveHourPct === "number" ? { fiveHourPct: f.FiveHourPct } : {}),
+    ...(typeof f.FiveHourResetsAt === "number"
+      ? { fiveHourResetsAt: new Date(f.FiveHourResetsAt * 1000).toISOString() }
+      : {}),
     ...(typeof f.ExtraUsageEnabled === "boolean" ? { extraUsageEnabled: f.ExtraUsageEnabled } : {}),
     ...(typeof f.ExtraUsagePct === "number" ? { extraUsagePct: f.ExtraUsagePct } : {}),
   };
@@ -215,10 +219,10 @@ export function createGristClient(deps: GristClientDeps): GristClient {
       const fields = {
         Row_Kind: USAGE_ROW_KIND,
         Updated: rest.updated,
-        FiveHourPct: rest.fiveHourPct,
-        FiveHourResetsAt: rest.fiveHourResetsAt,
         WeeklyPct: rest.weeklyPct,
         WeeklyResetsAt: rest.weeklyResetsAt,
+        ...(rest.fiveHourPct !== undefined ? { FiveHourPct: rest.fiveHourPct } : {}),
+        ...(rest.fiveHourResetsAt !== undefined ? { FiveHourResetsAt: rest.fiveHourResetsAt } : {}),
         ...(extraUsageEnabled !== undefined ? { ExtraUsageEnabled: extraUsageEnabled } : {}),
         ...(extraUsagePct !== undefined ? { ExtraUsagePct: extraUsagePct } : {}),
       };

@@ -13,8 +13,9 @@ export const WEEK_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** What `POST /api/usage-report` accepts, once validated. */
 export interface UsageReportInput {
-  fiveHourPct: number;
-  fiveHourResetsAt: string;
+  /** Absent when Anthropic reports no 5-hour window for this account. */
+  fiveHourPct?: number;
+  fiveHourResetsAt?: string;
   weeklyPct: number;
   weeklyResetsAt: string;
   extraUsageEnabled?: boolean;
@@ -28,24 +29,33 @@ export function parseUsageReport(body: unknown): { value: UsageReportInput } | {
   }
   const b = body as Record<string, unknown>;
 
-  const fiveHourPct = b.fiveHourPct;
-  if (typeof fiveHourPct !== "number" || !Number.isFinite(fiveHourPct)) {
-    return { error: "fiveHourPct must be a number" };
-  }
   const weeklyPct = b.weeklyPct;
   if (typeof weeklyPct !== "number" || !Number.isFinite(weeklyPct)) {
     return { error: "weeklyPct must be a number" };
-  }
-  const fiveHourResetsAt = b.fiveHourResetsAt;
-  if (typeof fiveHourResetsAt !== "string" || Number.isNaN(Date.parse(fiveHourResetsAt))) {
-    return { error: "fiveHourResetsAt must be an ISO 8601 timestamp" };
   }
   const weeklyResetsAt = b.weeklyResetsAt;
   if (typeof weeklyResetsAt !== "string" || Number.isNaN(Date.parse(weeklyResetsAt))) {
     return { error: "weeklyResetsAt must be an ISO 8601 timestamp" };
   }
 
-  const value: UsageReportInput = { fiveHourPct, fiveHourResetsAt, weeklyPct, weeklyResetsAt };
+  const value: UsageReportInput = { weeklyPct, weeklyResetsAt };
+
+  // The 5-hour window is optional — Anthropic reports it as `null` for some
+  // accounts — but when either half is given, both must be valid.
+  const hasFiveHour = "fiveHourPct" in b || "fiveHourResetsAt" in b;
+  if (hasFiveHour) {
+    const fiveHourPct = b.fiveHourPct;
+    if (typeof fiveHourPct !== "number" || !Number.isFinite(fiveHourPct)) {
+      return { error: "fiveHourPct must be a number" };
+    }
+    const fiveHourResetsAt = b.fiveHourResetsAt;
+    if (typeof fiveHourResetsAt !== "string" || Number.isNaN(Date.parse(fiveHourResetsAt))) {
+      return { error: "fiveHourResetsAt must be an ISO 8601 timestamp" };
+    }
+    value.fiveHourPct = fiveHourPct;
+    value.fiveHourResetsAt = fiveHourResetsAt;
+  }
+
   const extraUsage = b.extraUsage;
   if (extraUsage && typeof extraUsage === "object") {
     const e = extraUsage as Record<string, unknown>;
@@ -125,7 +135,10 @@ export function renderUsageHtml(usage: UsageSnapshot | null, now: Date): string 
         <span class="usage-pct">${usage.extraUsagePct ?? 0}%</span>
       </div>`
     : "";
-  return windowRowHtml("5h", usage.fiveHourPct, usage.fiveHourResetsAt, FIVE_HOUR_MS, now) +
+  const fiveHour = usage.fiveHourPct !== undefined && usage.fiveHourResetsAt !== undefined
+    ? windowRowHtml("5h", usage.fiveHourPct, usage.fiveHourResetsAt, FIVE_HOUR_MS, now)
+    : "";
+  return fiveHour +
     windowRowHtml("7d", usage.weeklyPct, usage.weeklyResetsAt, WEEK_MS, now) +
     extra;
 }

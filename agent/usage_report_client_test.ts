@@ -56,6 +56,19 @@ Deno.test("submit POSTs the usage snapshot with the claw JWT as a bearer token",
   });
 });
 
+Deno.test("submit omits the five-hour fields when the snapshot doesn't have them", async () => {
+  const { fn, calls } = fakeFetch(() => json({ ok: true }));
+  const client = createUsageReportClient({ baseUrl: "https://claw.example.com", fetch: fn });
+
+  const { fiveHourPct: _fiveHourPct, fiveHourResetsAt: _fiveHourResetsAt, ...rest } = SAMPLE_USAGE;
+  await client.submit("the.claw.jwt", rest);
+
+  assertEquals(calls[0]!.body, {
+    weeklyPct: 31,
+    weeklyResetsAt: "2026-07-28T00:00:00Z",
+  });
+});
+
 Deno.test("submit includes extraUsage only when the snapshot has it", async () => {
   const { fn, calls } = fakeFetch(() => json({ ok: true }));
   const client = createUsageReportClient({ baseUrl: "https://claw.example.com", fetch: fn });

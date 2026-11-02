@@ -110,6 +110,14 @@ Deno.test("renderUsageHtml shows a negative pacemaker with a − sign", () => {
   assertStringIncludes(html, "−19%");
 });
 
+Deno.test("renderUsageHtml omits the 5h row when the snapshot has no five-hour window (regression: Anthropic reports five_hour:null for some accounts)", () => {
+  const { fiveHourPct: _p, fiveHourResetsAt: _r, ...rest } = snapshot();
+  const html = renderUsageHtml(rest as UsageSnapshot, NOW);
+  assertEquals(html.includes("5h"), false);
+  assertStringIncludes(html, "31%");
+  assertStringIncludes(html, "4d0h");
+});
+
 Deno.test("renderUsageHtml omits the extra-usage line when not enabled", () => {
   const html = renderUsageHtml(snapshot(), NOW);
   assertEquals(html.includes("Extra usage"), false);
@@ -153,11 +161,20 @@ Deno.test("parseUsageReport rejects a non-object body", () => {
   assertEquals("error" in parseUsageReport(42), true);
 });
 
-Deno.test("parseUsageReport rejects a missing or non-numeric fiveHourPct", () => {
-  const { fiveHourPct: _drop, ...rest } = VALID_REPORT;
-  assertEquals("error" in parseUsageReport(rest), true);
+Deno.test("parseUsageReport accepts a report with no five-hour window at all (Anthropic reports five_hour:null for some accounts)", () => {
+  const { fiveHourPct: _p, fiveHourResetsAt: _r, ...rest } = VALID_REPORT;
+  const result = parseUsageReport(rest);
+  assertEquals(result, { value: rest });
+});
+
+Deno.test("parseUsageReport rejects a non-numeric fiveHourPct when present", () => {
   assertEquals("error" in parseUsageReport({ ...VALID_REPORT, fiveHourPct: "68" }), true);
   assertEquals("error" in parseUsageReport({ ...VALID_REPORT, fiveHourPct: NaN }), true);
+});
+
+Deno.test("parseUsageReport rejects fiveHourPct given without a matching fiveHourResetsAt", () => {
+  const { fiveHourResetsAt: _drop, ...rest } = VALID_REPORT;
+  assertEquals("error" in parseUsageReport(rest), true);
 });
 
 Deno.test("parseUsageReport rejects a missing or non-numeric weeklyPct", () => {

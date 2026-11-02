@@ -38,11 +38,13 @@ export function createUsageReportClient(deps: UsageReportClientDeps): UsageRepor
   return {
     async submit(jwt, usage) {
       const body: Record<string, unknown> = {
-        fiveHourPct: usage.fiveHourPct,
-        fiveHourResetsAt: usage.fiveHourResetsAt,
         weeklyPct: usage.weeklyPct,
         weeklyResetsAt: usage.weeklyResetsAt,
       };
+      if (usage.fiveHourPct !== undefined && usage.fiveHourResetsAt !== undefined) {
+        body.fiveHourPct = usage.fiveHourPct;
+        body.fiveHourResetsAt = usage.fiveHourResetsAt;
+      }
       if (usage.extraUsageEnabled !== undefined || usage.extraUsagePct !== undefined) {
         body.extraUsage = {
           enabled: usage.extraUsageEnabled ?? false,

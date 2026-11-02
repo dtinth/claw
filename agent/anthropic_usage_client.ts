@@ -9,8 +9,9 @@
 const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 
 export interface AnthropicUsage {
-  fiveHourPct: number;
-  fiveHourResetsAt: string;
+  /** Absent when Anthropic reports no 5-hour window for this account (its `five_hour` field is `null`). */
+  fiveHourPct?: number;
+  fiveHourResetsAt?: string;
   weeklyPct: number;
   weeklyResetsAt: string;
   /** Only present when the response's `extra_usage` block is enabled. */
@@ -95,18 +96,23 @@ export function createAnthropicUsageClient(
       }
 
       const b = body as {
-        five_hour?: { utilization?: unknown; resets_at?: unknown };
+        five_hour?: { utilization?: unknown; resets_at?: unknown } | null;
         seven_day?: { utilization?: unknown; resets_at?: unknown };
         extra_usage?: { is_enabled?: unknown; utilization?: unknown };
       } | undefined;
 
-      const fiveHourPct = b?.five_hour?.utilization;
-      const fiveHourResetsAt = b?.five_hour?.resets_at;
+      // `five_hour` is `null` when Anthropic isn't tracking a 5-hour window for
+      // this account (regression: claw used to require it and throw here).
+      const fiveHour = b?.five_hour;
+      const fiveHourPct = fiveHour?.utilization;
+      const fiveHourResetsAt = fiveHour?.resets_at;
+      const fiveHourValid = fiveHour == null ||
+        (typeof fiveHourPct === "number" && typeof fiveHourResetsAt === "string");
+
       const weeklyPct = b?.seven_day?.utilization;
       const weeklyResetsAt = b?.seven_day?.resets_at;
       if (
-        typeof fiveHourPct !== "number" || typeof fiveHourResetsAt !== "string" ||
-        typeof weeklyPct !== "number" || typeof weeklyResetsAt !== "string"
+        !fiveHourValid || typeof weeklyPct !== "number" || typeof weeklyResetsAt !== "string"
       ) {
         throw new AnthropicUsageError(
           "unexpected response from Anthropic's usage endpoint",
@@ -114,7 +120,11 @@ export function createAnthropicUsageClient(
         );
       }
 
-      const usage: AnthropicUsage = { fiveHourPct, fiveHourResetsAt, weeklyPct, weeklyResetsAt };
+      const usage: AnthropicUsage = { weeklyPct, weeklyResetsAt };
+      if (fiveHour != null) {
+        usage.fiveHourPct = fiveHourPct as number;
+        usage.fiveHourResetsAt = fiveHourResetsAt as string;
+      }
       const extra = b?.extra_usage;
       if (extra?.is_enabled === true) {
         usage.extraUsageEnabled = true;

@@ -109,6 +109,34 @@ Deno.test("fetchUsage throws AnthropicUsageError when the response shape is unex
   await assertRejects(() => client.fetchUsage("token"), AnthropicUsageError, "unexpected");
 });
 
+Deno.test("fetchUsage omits the five-hour fields when Anthropic reports five_hour as null (regression: used to throw 'unexpected response')", async () => {
+  const { fn } = fakeFetch(() =>
+    json({
+      five_hour: null,
+      seven_day: SAMPLE_BODY.seven_day,
+    })
+  );
+  const client = createAnthropicUsageClient({ fetch: fn });
+  const usage = await client.fetchUsage("token");
+  assertEquals(usage, {
+    weeklyPct: 31,
+    weeklyResetsAt: "2026-07-28T00:00:00Z",
+  });
+  assertEquals("fiveHourPct" in usage, false);
+  assertEquals("fiveHourResetsAt" in usage, false);
+});
+
+Deno.test("fetchUsage still throws when five_hour is present but malformed", async () => {
+  const { fn } = fakeFetch(() =>
+    json({
+      five_hour: { utilization: "not a number" },
+      seven_day: SAMPLE_BODY.seven_day,
+    })
+  );
+  const client = createAnthropicUsageClient({ fetch: fn });
+  await assertRejects(() => client.fetchUsage("token"), AnthropicUsageError, "unexpected");
+});
+
 Deno.test("fetchUsage throws a status-less AnthropicUsageError on a network failure", async () => {
   const fn = (): Promise<Response> => {
     throw new TypeError("network error");
