@@ -1044,6 +1044,81 @@ Deno.test("setup: fails if the git config call fails", async () => {
   assertEquals(code, 1);
 });
 
+Deno.test("setup --local: installs a repo-local helper that shells out to `claw token`", async () => {
+  const { rt, commandCalls, stdout } = makeFakeRuntime({
+    env: { HOME: "/home/dtinth" },
+    commandOutputs: {
+      "git config --local --replace-all credential.https://github.com.helper ": { code: 0 },
+      'git config --local --add credential.https://github.com.helper !f() { echo username=x-access-token; echo "password=$(claw token --repo owner/repo)"; }; f':
+        { code: 0 },
+    },
+  });
+  const code = await runCli(["setup", "--local", "--repo", "owner/repo"], rt);
+  assertEquals(code, 0);
+  assertEquals(commandCalls[0], {
+    cmd: "git",
+    args: ["config", "--local", "--replace-all", "credential.https://github.com.helper", ""],
+  });
+  assertEquals(commandCalls[1], {
+    cmd: "git",
+    args: [
+      "config",
+      "--local",
+      "--add",
+      "credential.https://github.com.helper",
+      '!f() { echo username=x-access-token; echo "password=$(claw token --repo owner/repo)"; }; f',
+    ],
+  });
+  assertStringIncludes(stdout.join(""), "claw token --repo owner/repo");
+});
+
+Deno.test("setup --local: resolves the repo from the git origin remote when --repo is omitted", async () => {
+  const { rt, commandCalls } = makeFakeRuntime({
+    env: { HOME: "/home/dtinth" },
+    commandOutputs: {
+      "git remote get-url origin": { code: 0, stdout: "git@github.com:owner/repo.git\n" },
+      "git config --local --replace-all credential.https://github.com.helper ": { code: 0 },
+      'git config --local --add credential.https://github.com.helper !f() { echo username=x-access-token; echo "password=$(claw token --repo owner/repo)"; }; f':
+        { code: 0 },
+    },
+  });
+  const code = await runCli(["setup", "--local"], rt);
+  assertEquals(code, 0);
+  assertEquals(commandCalls.at(-1), {
+    cmd: "git",
+    args: [
+      "config",
+      "--local",
+      "--add",
+      "credential.https://github.com.helper",
+      '!f() { echo username=x-access-token; echo "password=$(claw token --repo owner/repo)"; }; f',
+    ],
+  });
+});
+
+Deno.test("setup --local: fails if the repo can't be resolved", async () => {
+  const { rt, stderr } = makeFakeRuntime({
+    env: { HOME: "/home/dtinth" },
+    commandOutputs: {
+      "git remote get-url origin": { code: 1 },
+    },
+  });
+  const code = await runCli(["setup", "--local"], rt);
+  assertEquals(code, 1);
+  assertStringIncludes(stderr.join(""), "could not determine the repository");
+});
+
+Deno.test("setup --local: fails if the git config call fails", async () => {
+  const { rt } = makeFakeRuntime({
+    env: { HOME: "/home/dtinth" },
+    commandOutputs: {
+      "git config --local --replace-all credential.https://github.com.helper ": { code: 1 },
+    },
+  });
+  const code = await runCli(["setup", "--local", "--repo", "owner/repo"], rt);
+  assertEquals(code, 1);
+});
+
 // --- claw doctor -----------------------------------------------------------
 
 Deno.test("doctor: reports ok when everything is configured", async () => {
@@ -1088,6 +1163,54 @@ Deno.test("doctor: fails when the credential helper is missing", async () => {
   });
   const code = await runCli(["doctor"], rt);
   assertEquals(code, 1);
+});
+
+Deno.test("doctor: accepts gh's own absolute-path credential helper (regression: mise-installed gh false alarm)", async () => {
+  const configDir = await Deno.makeTempDir();
+  await Deno.writeTextFile(`${configDir}/grants.json`, JSON.stringify({ "dtinth/claw": "jwt" }));
+  const { rt, stdout } = makeFakeRuntime({
+    env: {
+      HOME: "/home/dtinth",
+      CLAW_BASE_URL: "https://claw.example.com",
+      CLAW_CONFIG_DIR: configDir,
+      CLAW_CACHE_DIR: await Deno.makeTempDir(),
+    },
+    commandOutputs: {
+      "git config --global --get-all credential.https://github.com.helper": {
+        code: 0,
+        stdout: "!/home/dtinth/.local/share/mise/installs/gh/2.96.0/bin/gh auth git-credential\n",
+      },
+      "gh --version": { code: 0, stdout: "gh version 2.96.0\n" },
+    },
+  });
+  const code = await runCli(["doctor"], rt);
+  assertEquals(code, 0);
+  assertMatch(stdout.join(""), /ok\s+git credential helper \(global\)/);
+});
+
+Deno.test("doctor: accepts a repo-local `claw token`-based credential helper", async () => {
+  const configDir = await Deno.makeTempDir();
+  await Deno.writeTextFile(`${configDir}/grants.json`, JSON.stringify({ "dtinth/claw": "jwt" }));
+  const { rt, stdout } = makeFakeRuntime({
+    env: {
+      HOME: "/home/dtinth",
+      CLAW_BASE_URL: "https://claw.example.com",
+      CLAW_CONFIG_DIR: configDir,
+      CLAW_CACHE_DIR: await Deno.makeTempDir(),
+    },
+    commandOutputs: {
+      "git config --global --get-all credential.https://github.com.helper": { code: 1 },
+      "git config --local --get-all credential.https://github.com.helper": {
+        code: 0,
+        stdout:
+          '!f() { echo username=x-access-token; echo "password=$(claw token --repo owner/repo)"; }; f\n',
+      },
+      "gh --version": { code: 0, stdout: "gh version 2.96.0\n" },
+    },
+  });
+  const code = await runCli(["doctor"], rt);
+  assertEquals(code, 0);
+  assertMatch(stdout.join(""), /ok\s+git credential helper \(local\)/);
 });
 
 // --- help / unknown --------------------------------------------------------

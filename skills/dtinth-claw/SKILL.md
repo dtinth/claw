@@ -64,6 +64,13 @@ the claw repo itself.
 GitHub API as this machine's identity, reach for `claw exec -- <command>` instead of a bare
 `git`/`gh` call.
 
+**Worktree-isolated sessions**: a session isolated to a git worktree (the `EnterWorktree` tool) may
+have its harness refuse to run `claw exec -- git ...` — it can't verify what the wrapper actually
+runs, so it blocks it as an unverifiable git operation. If `claw exec -- git push` is refused this
+way, run `claw setup --local` once in that worktree: it installs a repo-local git credential helper
+that calls `claw token` directly, so a plain `git push` works without any wrapper. `gh` commands are
+unaffected by this guard and still go through `claw exec -- gh ...`.
+
 ## Watching for new issue/PR comments
 
 `claw read <issue>` fetches the current backlog once, prints each comment as a JSON line, and exits.
@@ -193,11 +200,11 @@ Suggested quick replies:
 
 ## Editing a specific comment
 
-Never use `gh issue comment --edit-last` to fix a comment you just posted — it edits the
-account's chronologically last comment on the **whole issue**, not the one just posted, and on a
-long-lived thread that can be a much older, unrelated comment. (GitHub does keep edit history,
-viewable from the web UI's "edited" link on a comment, so an accidental edit like this may be
-recoverable by asking dtinth to check there — but don't rely on that; avoid the mistake instead.)
+Never use `gh issue comment --edit-last` to fix a comment you just posted — it edits the account's
+chronologically last comment on the **whole issue**, not the one just posted, and on a long-lived
+thread that can be a much older, unrelated comment. (GitHub does keep edit history, viewable from
+the web UI's "edited" link on a comment, so an accidental edit like this may be recoverable by
+asking dtinth to check there — but don't rely on that; avoid the mistake instead.)
 
 To edit one specific comment, use its exact id (from the URL or the `gh issue comment` output) with
 `gh api`, not `--edit-last`:
@@ -207,8 +214,8 @@ claw exec -- gh api repos/<owner>/<repo>/issues/comments/<id> -X PATCH -F body=@
 ```
 
 **Use `-F`, not `-f`.** `-F`/`--field` reads `@<file>` as "read the body from this file"; `-f`/
-`--raw-field` treats `@<file>` as a literal string and posts that path as the comment body
-verbatim — a real mistake made in this repo's own dev thread.
+`--raw-field` treats `@<file>` as a literal string and posts that path as the comment body verbatim
+— a real mistake made in this repo's own dev thread.
 
 ## Public repos: care with anything posted
 

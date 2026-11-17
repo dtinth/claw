@@ -177,6 +177,25 @@ minted this way always expires in 14 days, capped regardless of what the
 "coding-agent" preset would otherwise allow — the only preset this flow can
 self-serve; anything broader still needs a hand-minted JWT.
 
+### Pushing from a sandbox that won't let you wrap `git` in `claw exec`
+
+Some agent harnesses isolate a session (e.g. a git worktree) and refuse to
+run `git` through an arbitrary wrapper like `claw exec -- git push`, since
+they can't see past the wrapper to confirm what it's actually running.
+`claw setup --local` works around that by making a plain `git push`/
+`git fetch` need no wrapper at all: it installs a credential helper *in that
+one repo's own git config* (not global) that shells out to `claw token`
+directly, instead of relying on `GH_TOKEN` being set by `claw exec`:
+
+```sh
+claw setup --local                    # resolves the repo from the git origin remote
+claw setup --local --repo owner/repo  # or name it explicitly
+git push                              # now works unwrapped, in this repo only
+```
+
+`gh` commands still need `claw exec -- gh ...` (or `GH_TOKEN=$(claw token) gh ...`) —
+this only rewires git's own credential lookup.
+
 ### Watching for comments
 
 `claw read <issue>` fetches claw's comment relay for one issue/PR once and

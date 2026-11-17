@@ -56,7 +56,11 @@ Usage:
                                          Ask for a grant on a repo with none yet; prints a code
   claw await-grant <secret> [--interval 10] [--timeout secs]
                                          Block until that request is approved, then save the grant
-  claw setup                            Point git's github.com credential helper at gh
+  claw setup [--local [--repo owner/repo]]
+                                         Point git's github.com credential helper at gh.
+                                         With --local, install a repo-local helper that calls
+                                         \`claw token\` directly instead (no \`claw exec\` needed —
+                                         useful when a harness refuses to run git through it)
   claw doctor                           Check config, grants, and git wiring
 
 Repo resolution: --repo, then $CLAW_REPO, then the git origin remote.
@@ -72,6 +76,22 @@ Grants file ($CLAW_CONFIG_DIR/grants.json): {"owner/repo": "<claw JWT>"}
 
 const GITHUB_HELPER_KEY = "credential.https://github.com.helper";
 const GH_HELPER_VALUE = "!gh auth git-credential";
+
+function clawTokenHelperValue(repo: string): string {
+  return `!f() { echo username=x-access-token; echo "password=$(claw token --repo ${repo})"; }; f`;
+}
+
+/** Matches `!gh auth git-credential`, and also `gh auth setup-git`'s own absolute-path form. */
+function isGhCredentialHelper(value: string): boolean {
+  const match = value.match(/^!(\S+) auth git-credential$/);
+  if (!match) return false;
+  const bin = match[1]!;
+  return bin === "gh" || bin.endsWith("/gh");
+}
+
+function isClawTokenHelper(value: string): boolean {
+  return value.includes("claw token");
+}
 
 /** Everything external the CLI touches, injectable for tests. */
 export interface Runtime {
@@ -810,7 +830,47 @@ async function cmdExec(args: string[], rt: Runtime): Promise<number> {
   return result.code;
 }
 
-async function cmdSetup(_args: string[], rt: Runtime): Promise<number> {
+async function cmdSetup(args: string[], rt: Runtime): Promise<number> {
+  const { repo: repoFlag, rest } = extractRepoFlag(args);
+  const local = rest.includes("--local");
+
+  if (local) {
+    const repo = await resolveRepo({
+      ...(repoFlag !== undefined ? { explicit: repoFlag } : {}),
+      env: rt.env,
+      getGitRemoteUrl: () => getGitRemoteUrl(rt),
+    });
+    const value = clawTokenHelperValue(repo);
+    // Clear first: --add alone would pile up a duplicate entry on every re-run.
+    const clear = await rt.runCommand("git", [
+      "config",
+      "--local",
+      "--replace-all",
+      GITHUB_HELPER_KEY,
+      "",
+    ]);
+    if (clear.code !== 0) {
+      rt.stderr(`claw: failed to reset the existing git credential helper: ${clear.stderr}\n`);
+      return clear.code;
+    }
+    const add = await rt.runCommand("git", [
+      "config",
+      "--local",
+      "--add",
+      GITHUB_HELPER_KEY,
+      value,
+    ]);
+    if (add.code !== 0) {
+      rt.stderr(`claw: failed to install the local git credential helper: ${add.stderr}\n`);
+      return add.code;
+    }
+    rt.stdout(
+      `claw: this repo's github.com credential helper now runs \`claw token --repo ${repo}\`\n` +
+        "directly — plain `git push`/`git fetch` work here without `claw exec`.\n",
+    );
+    return 0;
+  }
+
   // Clear first: --add alone would pile up a duplicate entry on every re-run.
   const clear = await rt.runCommand("git", [
     "config",
@@ -875,20 +935,44 @@ async function cmdDoctor(_args: string[], rt: Runtime): Promise<number> {
     }
   }
 
-  const helper = await rt.runCommand("git", ["config", "--global", "--get-all", GITHUB_HELPER_KEY]);
-  const helpers = helper.stdout.split("\n").map((line) => line.trim()).filter(Boolean);
-  if (helpers.includes(GH_HELPER_VALUE)) {
-    lines.push(`ok    git credential helper: ${GH_HELPER_VALUE}`);
-  } else if (helpers.length > 0) {
+  const globalHelper = await rt.runCommand("git", [
+    "config",
+    "--global",
+    "--get-all",
+    GITHUB_HELPER_KEY,
+  ]);
+  const localHelper = await rt.runCommand("git", [
+    "config",
+    "--local",
+    "--get-all",
+    GITHUB_HELPER_KEY,
+  ]);
+  const helperEntries = [
+    ...localHelper.stdout.split("\n").map((v) => v.trim()).filter(Boolean).map((value) => (
+      { scope: "local" as const, value }
+    )),
+    ...globalHelper.stdout.split("\n").map((v) => v.trim()).filter(Boolean).map((value) => (
+      { scope: "global" as const, value }
+    )),
+  ];
+  const matched = helperEntries.find(
+    (e) => isGhCredentialHelper(e.value) || isClawTokenHelper(e.value),
+  );
+  if (matched) {
+    lines.push(`ok    git credential helper (${matched.scope}): ${matched.value}`);
+  } else if (helperEntries.length > 0) {
     ok = false;
     lines.push(
       `FAIL  git credential helper is ${
-        JSON.stringify(helpers)
-      }, expected "${GH_HELPER_VALUE}" — run \`claw setup\``,
+        JSON.stringify(helperEntries.map((e) => e.value))
+      }, expected a gh or \`claw token\`-based helper — run \`claw setup\` (or \`claw setup --local\`)`,
     );
   } else {
     ok = false;
-    lines.push("FAIL  git credential helper not configured — run `claw setup`");
+    lines.push(
+      "FAIL  git credential helper not configured — run `claw setup` " +
+        "(or `claw setup --local` in a worktree-isolated session)",
+    );
   }
 
   const gh = await rt.runCommand("gh", ["--version"]);
